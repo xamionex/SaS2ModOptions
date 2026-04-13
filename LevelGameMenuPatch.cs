@@ -18,6 +18,7 @@ public static class LevelGameMenuPatch
     /// Patch Update to open our screen when "Mod Options" is selected
     [HarmonyPatch(typeof(LevelGameMenu), "Update")]
     [HarmonyPostfix]
+    // ReSharper disable once InconsistentNaming
     public static void LevelGameMenu_Postfix(LevelGameMenu __instance, Character character, float frameTime)
     {
         if (!__instance.CanInput() || !__instance.player.keys.keyAccept)

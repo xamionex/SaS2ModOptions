@@ -18,6 +18,7 @@ public static class LevelMainMenuPatch
     /// Patch LevelMainMenu.Update to open our screen
     [HarmonyPatch(typeof(LevelMainMenu), "Update")]
     [HarmonyPostfix]
+    // ReSharper disable once InconsistentNaming
     public static void LevelMainMenuPostFix(LevelMainMenu __instance, Character character, float frameTime)
     {
         if (!__instance.CanInput() || !__instance.player.keys.keyAccept)

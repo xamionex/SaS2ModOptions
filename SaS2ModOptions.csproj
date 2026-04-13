@@ -5,7 +5,7 @@
         <AssemblyName>amione.SaS2ModOptions</AssemblyName>
         <Product>SaS2ModOptions</Product>
         <ProductDescription>pt.rs BepInEx Plugin Template!</ProductDescription>
-        <Version>1.0.0</Version>
+        <Version>1.0.1</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <RestoreAdditionalProjectSources>

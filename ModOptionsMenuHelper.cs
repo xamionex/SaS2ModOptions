@@ -21,8 +21,7 @@ public static class ModOptionsMenuHelper
             return;
         }
 
-        var levelList = _levelField.GetValue(player.menu) as List<LevelBase>;
-        if (levelList == null) return;
+        if (_levelField.GetValue(player.menu) is not List<LevelBase> levelList) return;
 
         // Remove any existing inactive instance to prevent conflicts
         levelList.RemoveAll(l => l is LevelModOptions && !l.IsActive());

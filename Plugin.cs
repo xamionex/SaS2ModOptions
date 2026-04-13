@@ -9,6 +9,7 @@ using HarmonyLib;
 namespace SaS2ModOptions;
 
 [BepInPlugin(PluginInfo.PluginGuid, PluginInfo.PluginName, PluginInfo.PluginVersion)]
+// ReSharper disable once ClassNeverInstantiated.Global
 public class SaS2ModOptions : BasePlugin
 {
     internal static SaS2ModOptions Instance;
@@ -53,16 +54,17 @@ public class SaS2ModOptions : BasePlugin
         return base.Unload();
     }
 
-    public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, string description = "")
+    // ReSharper disable once UnusedMember.Global
+    public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, int order = 0)
     {
-        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, displayName, description));
+        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, displayName, order));
     }
 
-    public class RegisteredConfig(ConfigEntryBase entry, string modName, string displayName, string description)
+    public class RegisteredConfig(ConfigEntryBase entry, string modName, string displayName, int order = 0)
     {
         public ConfigEntryBase Entry { get; } = entry;
         public string ModName { get; } = modName;
         public string DisplayName { get; } = displayName;
-        public string Description { get; } = description;
+        public int Order { get; } = order;
     }
 }

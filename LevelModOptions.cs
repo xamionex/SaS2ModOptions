@@ -1,17 +1,15 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using BepInEx.Configuration;
-using Chronicler.dialog;
 using Common;
 using HarmonyLib;
 using Menumancer.hud;
 using Menumancer.UIFormat;
 using ProjectMage;
 using ProjectMage.character;
-using ProjectMage.config;
 using ProjectMage.player;
 using ProjectMage.player.menu;
 
@@ -22,7 +20,7 @@ public class LevelModOptions : LevelBase
     private List<SaS2ModOptions.RegisteredConfig> _displayedConfigs;
     private int _selectedIndex;
     private float _scrollOffset;
-    private int _returnScreen;
+    private readonly int _returnScreen;
     
     // UI Constants
     private const float ItemHeight = 40f;
@@ -30,7 +28,7 @@ public class LevelModOptions : LevelBase
     private float _listX;
     private float _listY;
     private float _listWidth;
-    private float _valueWidth = 240f; // Widened to fit RGBA strings
+    private const float ValueWidth = 240f; // Widened to fit RGBA strings
 
     // Color Editing State
     private int _colorCompIndex = -1; // -1 = none, 0=R, 1=G, 2=B, 3=A
@@ -51,6 +49,7 @@ public class LevelModOptions : LevelBase
         
         _displayedConfigs = SaS2ModOptions.RegisteredConfigs
             .OrderBy(c => c.ModName)
+            .ThenBy(c => c.Order)
             .ThenBy(c => c.DisplayName)
             .ToList();
     }
@@ -151,7 +150,7 @@ public class LevelModOptions : LevelBase
             if (float.TryParse(parts[comp], out var v))
             {
                 v = (float)Math.Round(Clamp(inc ? v + 0.05f : v - 0.05f, 0f, 1f), 2);
-                parts[comp] = v.ToString();
+                parts[comp] = v.ToString(CultureInfo.InvariantCulture);
             }
         }
         config.Entry.BoxedValue = string.Join(",", parts);
@@ -219,13 +218,14 @@ public class LevelModOptions : LevelBase
                 Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10, textY), textColor, 0.7f, 0);
                 
                 var valStr = FormatValue(cfg.Entry, selected);
-                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - _valueWidth, textY), textColor, 0.7f, 0);
+                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth, textY), textColor, 0.7f, 0);
             }
             currentY += ItemHeight;
         }
 
         var action = player.inputProfile.keyMouseEnable ? "[Space]" : "[a]";
         var help = new StringBuilder($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
+        // ReSharper disable once PossibleLossOfFraction
         Text.DrawText(help, new Vector2(vp.Width / 2, vp.Height - 40), Color.White, 0.6f, 1, player, 1);
     }
 
