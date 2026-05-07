@@ -91,7 +91,7 @@ public static class LevelPatch
                 ((LevelSettings)__instance.player.menu.GetLevelByScreen(54)).Activate(10);
                 return false;
             default:
-                return true; // original switch handles Equipment–Bestiary
+                return true; // original switch handles Equipment/Bestiary
         }
     }
 

@@ -56,8 +56,7 @@ public class SaS2ModOptions : BasePlugin
         return base.Unload();
     }
     
-    /// For a global config entry that was registered as perPlayer=true,
-    /// returns the player‑specific entry (creates it on first access, falling back to the global value).
+    /// For a global config entry that was registered as perPlayer=true, returns the player‑specific entry (creates it on first access, falling back to the global value).
     // ReSharper disable once UnusedMember.Global
     public static ConfigEntryBase GetPlayerConfigEntry(ConfigEntryBase globalEntry, int playerId)
     {

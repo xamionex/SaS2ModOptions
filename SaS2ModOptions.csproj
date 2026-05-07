@@ -4,8 +4,8 @@
         <TargetFramework>net452</TargetFramework>
         <AssemblyName>amione.SaS2ModOptions</AssemblyName>
         <Product>SaS2ModOptions</Product>
-        <ProductDescription>pt.rs BepInEx Plugin Template!</ProductDescription>
-        <Version>1.0.2</Version>
+        <ProductDescription>Adds in-game options for some of my other mods, does nothing by itself</ProductDescription>
+        <Version>1.0.3</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <RestoreAdditionalProjectSources>

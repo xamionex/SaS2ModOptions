@@ -165,7 +165,7 @@ public class LevelModOptions : LevelBase
         entry.BoxedValue = string.Join(",", parts);
     }
 
-    private void CycleEnum(ConfigEntryBase entry, bool forward)
+    private static void CycleEnum(ConfigEntryBase entry, bool forward)
     {
         var values = Enum.GetValues(entry.SettingType);
         var index = Array.IndexOf(values, entry.BoxedValue);
@@ -173,7 +173,7 @@ public class LevelModOptions : LevelBase
         entry.BoxedValue = values.GetValue(index);
     }
 
-    private bool IsColorString(ConfigEntryBase entry) => 
+    private static bool IsColorString(ConfigEntryBase entry) => 
         entry.SettingType == typeof(string) && ((string)entry.BoxedValue)?.Split(',').Length == 4;
 
     public override void Draw()
@@ -183,20 +183,11 @@ public class LevelModOptions : LevelBase
         var boxWidth = Math.Min(1000, vp.Width * 0.8f);
         var boxHeight = vp.Height * 0.7f;
 
-        // Split‑screen when local coop is active
-        float boxX;
-        var isLocalCoop = (bool)AccessTools.Method(typeof(PlayerMgr), "IsLocalCoopMode")!.Invoke(null, null)!;
-
-        if (isLocalCoop)
-        {
-            var halfWidth = vp.Width * 0.5f;
-            var isMainPlayer = player.ID == GameSessionMgr.gameSession.mainPlayerIdx;
-            boxX = isMainPlayer ? halfWidth * 0.5f - boxWidth * 0.5f : halfWidth + halfWidth * 0.5f - boxWidth * 0.5f;
-        }
-        else
-        {
-            boxX = (vp.Width - boxWidth) / 2f;
-        }
+        // always assume local coop, therefore menu takes place in respective player side
+        // done because controller always opens session, see comment commit to see how to revert
+        var halfWidth = vp.Width * 0.5f; 
+        var isMainPlayer = player.ID == GameSessionMgr.gameSession.mainPlayerIdx;
+        var boxX = isMainPlayer ? halfWidth * 0.5f - boxWidth * 0.5f : halfWidth + halfWidth * 0.5f - boxWidth * 0.5f;
         var boxY = (vp.Height - boxHeight) / 2f;
 
         UIRender.DrawRect(new Rectangle((int)boxX, (int)boxY, (int)boxWidth, (int)boxHeight), 0.85f, 0, 1f, 1f, UIRender.interfaceTex);

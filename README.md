@@ -1,5 +1,5 @@
 # SaS2ModOptions
 
-Adds an in-game mod settings for use with some of my other mods
+Adds in-game options for some of my other mods, does nothing by itself
 
 Made with https://github.com/xamionex/SaltAndSacrificeBepInExTemplate
