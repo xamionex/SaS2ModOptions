@@ -10,6 +10,7 @@ using Menumancer.hud;
 using Menumancer.UIFormat;
 using ProjectMage;
 using ProjectMage.character;
+using ProjectMage.gamestate;
 using ProjectMage.player;
 using ProjectMage.player.menu;
 
@@ -21,6 +22,7 @@ public class LevelModOptions : LevelBase
     private int _selectedIndex;
     private float _scrollOffset;
     private readonly int _returnScreen;
+    private int _currentPlayerId;
     
     // UI Constants
     private const float ItemHeight = 40f;
@@ -46,13 +48,17 @@ public class LevelModOptions : LevelBase
         base.Init(strScreen, plr);
         // Make this screen modal to block game input
         if (!screen.uiFlag.Contains(9)) screen.uiFlag.Add(9);
-        
+        _currentPlayerId = plr.ID;   // 0 = Player1, 1 = Player2
+
         _displayedConfigs = SaS2ModOptions.RegisteredConfigs
             .OrderBy(c => c.ModName)
             .ThenBy(c => c.Order)
             .ThenBy(c => c.DisplayName)
             .ToList();
     }
+    
+    // Helper to get the correct ConfigEntryBase for the current player
+    private ConfigEntryBase GetActiveEntry(SaS2ModOptions.RegisteredConfig cfg) => cfg.GetEntryForPlayer(_currentPlayerId);
 
     // Helper to replace missing Math.Clamp in .NET Framework 4.5
     private static int Clamp(int value, int min, int max) => Math.Max(min, Math.Min(max, value));
@@ -73,7 +79,8 @@ public class LevelModOptions : LevelBase
         }
 
         var config = _displayedConfigs[_selectedIndex];
-        var isColor = IsColorString(config.Entry);
+        var activeEntry = GetActiveEntry(config);
+        var isColor = IsColorString(activeEntry);
         var valueChanged = false;
 
         // Color Picker: Press Accept to cycle R -> G -> B -> A -> Off
@@ -107,7 +114,7 @@ public class LevelModOptions : LevelBase
 
         if (valueChanged)
         {
-            config.Entry.ConfigFile.Save();
+            GetActiveEntry(config).ConfigFile.Save();
             PlaySelect();
         }
 
@@ -121,20 +128,22 @@ public class LevelModOptions : LevelBase
 
     private void ModifyValue(SaS2ModOptions.RegisteredConfig config, bool increase)
     {
-        var type = config.Entry.SettingType;
+        var entry = GetActiveEntry(config);
+        var type = entry.SettingType;
         if (type == typeof(bool))
-            ((ConfigEntry<bool>)config.Entry).Value = !((ConfigEntry<bool>)config.Entry).Value;
+            ((ConfigEntry<bool>)entry).Value = !((ConfigEntry<bool>)entry).Value;
         else if (type.IsEnum)
-            CycleEnum(config, increase);
+            CycleEnum(entry, increase);
         else if (type == typeof(int))
-            ((ConfigEntry<int>)config.Entry).Value += increase ? 1 : -1;
+            ((ConfigEntry<int>)entry).Value += increase ? 1 : -1;
         else if (type == typeof(float))
-            ((ConfigEntry<float>)config.Entry).Value += increase ? 0.05f : -0.05f;
+            ((ConfigEntry<float>)entry).Value += increase ? 0.05f : -0.05f;
     }
 
     private void ModifyColorComponent(SaS2ModOptions.RegisteredConfig config, int comp, bool inc)
     {
-        var parts = ((string)config.Entry.BoxedValue).Split(',');
+        var entry = GetActiveEntry(config);
+        var parts = ((string)entry.BoxedValue).Split(',');
         if (parts.Length != 4) return;
 
         if (comp < 3) // RGB Channels (0-255)
@@ -153,15 +162,15 @@ public class LevelModOptions : LevelBase
                 parts[comp] = v.ToString(CultureInfo.InvariantCulture);
             }
         }
-        config.Entry.BoxedValue = string.Join(",", parts);
+        entry.BoxedValue = string.Join(",", parts);
     }
 
-    private static void CycleEnum(SaS2ModOptions.RegisteredConfig config, bool forward)
+    private void CycleEnum(ConfigEntryBase entry, bool forward)
     {
-        var values = Enum.GetValues(config.Entry.SettingType);
-        var index = Array.IndexOf(values, config.Entry.BoxedValue);
+        var values = Enum.GetValues(entry.SettingType);
+        var index = Array.IndexOf(values, entry.BoxedValue);
         index = forward ? (index + 1) % values.Length : (index - 1 + values.Length) % values.Length;
-        config.Entry.BoxedValue = values.GetValue(index);
+        entry.BoxedValue = values.GetValue(index);
     }
 
     private bool IsColorString(ConfigEntryBase entry) => 
@@ -173,7 +182,21 @@ public class LevelModOptions : LevelBase
         var vp = Game1.Instance.GraphicsDevice.Viewport;
         var boxWidth = Math.Min(1000, vp.Width * 0.8f);
         var boxHeight = vp.Height * 0.7f;
-        var boxX = (vp.Width - boxWidth) / 2f;
+
+        // Split‑screen when local coop is active
+        float boxX;
+        var isLocalCoop = (bool)AccessTools.Method(typeof(PlayerMgr), "IsLocalCoopMode")!.Invoke(null, null)!;
+
+        if (isLocalCoop)
+        {
+            var halfWidth = vp.Width * 0.5f;
+            var isMainPlayer = player.ID == GameSessionMgr.gameSession.mainPlayerIdx;
+            boxX = isMainPlayer ? halfWidth * 0.5f - boxWidth * 0.5f : halfWidth + halfWidth * 0.5f - boxWidth * 0.5f;
+        }
+        else
+        {
+            boxX = (vp.Width - boxWidth) / 2f;
+        }
         var boxY = (vp.Height - boxHeight) / 2f;
 
         UIRender.DrawRect(new Rectangle((int)boxX, (int)boxY, (int)boxWidth, (int)boxHeight), 0.85f, 0, 1f, 1f, UIRender.interfaceTex);
@@ -217,7 +240,7 @@ public class LevelModOptions : LevelBase
 
                 Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10, textY), textColor, 0.7f, 0);
                 
-                var valStr = FormatValue(cfg.Entry, selected);
+                var valStr = FormatValue(cfg, selected);
                 Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth, textY), textColor, 0.7f, 0);
             }
             currentY += ItemHeight;
@@ -226,11 +249,12 @@ public class LevelModOptions : LevelBase
         var action = player.inputProfile.keyMouseEnable ? "[Space]" : "[a]";
         var help = new StringBuilder($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
         // ReSharper disable once PossibleLossOfFraction
-        Text.DrawText(help, new Vector2(vp.Width / 2, vp.Height - 40), Color.White, 0.6f, 1, player, 1);
+        Text.DrawText(help, new Vector2(boxX + boxWidth / 2f, vp.Height - 40), Color.White, 0.6f, 1, player, 1);
     }
 
-    private string FormatValue(ConfigEntryBase entry, bool selected)
+    private string FormatValue(SaS2ModOptions.RegisteredConfig config, bool selected)
     {
+        var entry = GetActiveEntry(config);
         if (IsColorString(entry) && selected && _colorCompIndex != -1)
         {
             var p = ((string)entry.BoxedValue).Split(',');
