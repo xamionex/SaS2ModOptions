@@ -25,7 +25,7 @@ public static class ModOptionsMenuHelper
 
         // Remove any existing inactive instance to prevent conflicts
         levelList.RemoveAll(l => l is LevelModOptions && !l.IsActive());
-        
+
         // Look for existing active instance
         var existing = levelList.OfType<LevelModOptions>().FirstOrDefault();
         if (existing != null)

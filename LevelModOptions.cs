@@ -23,7 +23,8 @@ public class LevelModOptions : LevelBase
     private float _scrollOffset;
     private readonly int _returnScreen;
     private int _currentPlayerId;
-    
+    private bool _fast;
+
     // UI Constants
     private const float ItemHeight = 40f;
     private const float SectionHeight = 60f;
@@ -48,7 +49,7 @@ public class LevelModOptions : LevelBase
         base.Init(strScreen, plr);
         // Make this screen modal to block game input
         if (!screen.uiFlag.Contains(9)) screen.uiFlag.Add(9);
-        _currentPlayerId = plr.ID;   // 0 = Player1, 1 = Player2
+        _currentPlayerId = plr.ID; // 0 = Player1, 1 = Player2
 
         _displayedConfigs = SaS2ModOptions.RegisteredConfigs
             .OrderBy(c => c.ModName)
@@ -56,9 +57,10 @@ public class LevelModOptions : LevelBase
             .ThenBy(c => c.DisplayName)
             .ToList();
     }
-    
+
     // Helper to get the correct ConfigEntryBase for the current player
-    private ConfigEntryBase GetActiveEntry(SaS2ModOptions.RegisteredConfig cfg) => cfg.GetEntryForPlayer(_currentPlayerId);
+    private ConfigEntryBase GetActiveEntry(SaS2ModOptions.RegisteredConfig cfg) =>
+        cfg.GetEntryForPlayer(_currentPlayerId);
 
     // Helper to replace missing Math.Clamp in .NET Framework 4.5
     private static int Clamp(int value, int min, int max) => Math.Max(min, Math.Min(max, value));
@@ -81,9 +83,10 @@ public class LevelModOptions : LevelBase
         var config = _displayedConfigs[_selectedIndex];
         var activeEntry = GetActiveEntry(config);
         var isColor = IsColorString(activeEntry);
+        var isBool = IsBool(activeEntry);
         var valueChanged = false;
 
-        // Color Picker: Press Accept to cycle R -> G -> B -> A -> Off
+        // Color Picker: Accept cycles R -> G -> B -> A -> Off
         if (player.keys.keyAccept && isColor)
         {
             _colorCompIndex++;
@@ -92,24 +95,19 @@ public class LevelModOptions : LevelBase
             return;
         }
 
-        if (player.keys.keyLeft || player.keys.keyRight)
+        if (player.keys.keyLeft || player.keys.keyRight || isBool && player.keys.keyAccept)
         {
             var right = player.keys.keyRight;
             if (isColor && _colorCompIndex != -1)
-            {
                 ModifyColorComponent(config, _colorCompIndex, right);
-            }
             else
-            {
-                ModifyValue(config, right);
-            }
+                ModifyValue(config, right, _fast);
 
             valueChanged = true;
         }
         else if (player.keys.keyAccept && !isColor)
         {
-            ModifyValue(config, true);
-            valueChanged = true;
+            _fast = !_fast;
         }
 
         if (valueChanged)
@@ -126,18 +124,48 @@ public class LevelModOptions : LevelBase
         }
     }
 
-    private void ModifyValue(SaS2ModOptions.RegisteredConfig config, bool increase)
+    private void ModifyValue(SaS2ModOptions.RegisteredConfig config, bool increase, bool fast = false)
     {
         var entry = GetActiveEntry(config);
         var type = entry.SettingType;
+
         if (type == typeof(bool))
+        {
             ((ConfigEntry<bool>)entry).Value = !((ConfigEntry<bool>)entry).Value;
+        }
         else if (type.IsEnum)
+        {
             CycleEnum(entry, increase);
+        }
         else if (type == typeof(int))
+        {
             ((ConfigEntry<int>)entry).Value += increase ? 1 : -1;
+        }
         else if (type == typeof(float))
-            ((ConfigEntry<float>)entry).Value += increase ? 0.05f : -0.05f;
+        {
+            if (fast) ((ConfigEntry<float>)entry).Value += increase ? 0.5f : -0.5f;
+            else ((ConfigEntry<float>)entry).Value += increase ? 0.05f : -0.05f;
+        }
+        else if (type == typeof(string))
+        {
+            // Cycle through the registered acceptable values list (if provided).
+            // Color strings (4-part comma format) are handled separately via the
+            // color picker and never reach this branch.
+            var acceptable = config.AcceptableValues;
+            if (acceptable == null || acceptable.Length == 0) return;
+
+            var current = (string)entry.BoxedValue ?? "";
+            var idx = Array.IndexOf(acceptable, current);
+
+            // If the stored value isn't in the list, snap to the first item
+            if (idx < 0) idx = 0;
+            else
+                idx = increase
+                    ? (idx + 1) % acceptable.Length
+                    : (idx - 1 + acceptable.Length) % acceptable.Length;
+
+            ((ConfigEntry<string>)entry).Value = acceptable[idx];
+        }
     }
 
     private void ModifyColorComponent(SaS2ModOptions.RegisteredConfig config, int comp, bool inc)
@@ -146,7 +174,7 @@ public class LevelModOptions : LevelBase
         var parts = ((string)entry.BoxedValue).Split(',');
         if (parts.Length != 4) return;
 
-        if (comp < 3) // RGB Channels (0-255)
+        if (comp < 3) // RGB channels (0-255)
         {
             if (int.TryParse(parts[comp], out var v))
             {
@@ -154,14 +182,15 @@ public class LevelModOptions : LevelBase
                 parts[comp] = v.ToString();
             }
         }
-        else // Alpha Channel (0.0-1.0)
+        else // Alpha channel (0.0-1.0)
         {
-            if (float.TryParse(parts[comp], out var v))
+            if (float.TryParse(parts[comp], NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
             {
                 v = (float)Math.Round(Clamp(inc ? v + 0.05f : v - 0.05f, 0f, 1f), 2);
                 parts[comp] = v.ToString(CultureInfo.InvariantCulture);
             }
         }
+
         entry.BoxedValue = string.Join(",", parts);
     }
 
@@ -169,12 +198,16 @@ public class LevelModOptions : LevelBase
     {
         var values = Enum.GetValues(entry.SettingType);
         var index = Array.IndexOf(values, entry.BoxedValue);
-        index = forward ? (index + 1) % values.Length : (index - 1 + values.Length) % values.Length;
+        index = forward
+            ? (index + 1) % values.Length
+            : (index - 1 + values.Length) % values.Length;
         entry.BoxedValue = values.GetValue(index);
     }
 
-    private static bool IsColorString(ConfigEntryBase entry) => 
+    private static bool IsColorString(ConfigEntryBase entry) =>
         entry.SettingType == typeof(string) && ((string)entry.BoxedValue)?.Split(',').Length == 4;
+
+    private static bool IsBool(ConfigEntryBase entry) => entry.SettingType == typeof(bool);
 
     public override void Draw()
     {
@@ -183,16 +216,17 @@ public class LevelModOptions : LevelBase
         var boxWidth = Math.Min(1000, vp.Width * 0.8f);
         var boxHeight = vp.Height * 0.7f;
 
-        // always assume local coop, therefore menu takes place in respective player side
-        // done because controller always opens session, see comment commit to see how to revert
-        var halfWidth = vp.Width * 0.5f; 
+        // Always assume local coop; menu takes place in respective player's side
+        var halfWidth = vp.Width * 0.5f;
         var isMainPlayer = player.ID == GameSessionMgr.gameSession.mainPlayerIdx;
-        var boxX = isMainPlayer ? halfWidth * 0.5f - boxWidth * 0.5f : halfWidth + halfWidth * 0.5f - boxWidth * 0.5f;
+        var boxX = isMainPlayer
+            ? halfWidth * 0.5f - boxWidth * 0.5f
+            : halfWidth + halfWidth * 0.5f - boxWidth * 0.5f;
         var boxY = (vp.Height - boxHeight) / 2f;
 
-        UIRender.DrawRect(new Rectangle((int)boxX, (int)boxY, (int)boxWidth, (int)boxHeight), 0.85f, 0, 1f, 1f, UIRender.interfaceTex);
+        UIRender.DrawRect(new Rectangle((int)boxX, (int)boxY, (int)boxWidth, (int)boxHeight), 0.85f, 0, 1f, 1f,
+            UIRender.interfaceTex);
 
-        // These are computed dynamically based on the box position
         _listX = boxX + 40f;
         _listY = boxY + 40f;
         _listWidth = boxWidth - 80f;
@@ -205,40 +239,45 @@ public class LevelModOptions : LevelBase
             var cfg = _displayedConfigs[i];
             var selected = i == _selectedIndex;
 
-            // Render Mod Section Title
+            // Mod section header
             if (cfg.ModName != lastMod)
             {
                 if (lastMod != null) currentY += 20f;
                 if (currentY + SectionHeight > _listY && currentY < _listY + listVisibleHeight)
                 {
-                    // Layout Fix: Added +35f vertical offset to center mod title correctly
-                    Text.DrawText(new StringBuilder(cfg.ModName), new Vector2(_listX, currentY + 35f), 
+                    Text.DrawText(new StringBuilder(cfg.ModName), new Vector2(_listX, currentY + 35f),
                         new Color(0.6f, 0.8f, 1f, 1f), 0.85f, 0);
-                    UIRender.DrawDivider(new Vector2(_listX + _listWidth / 2f, currentY + 45f), 0.7f, 1f, 1f, 0.7f, 0.5f, 1, UIRender.interfaceTex);
+                    UIRender.DrawDivider(new Vector2(_listX + _listWidth / 2f, currentY + 45f), 0.7f, 1f, 1f, 0.7f,
+                        0.5f, 1, UIRender.interfaceTex);
                 }
+
                 currentY += SectionHeight;
                 lastMod = cfg.ModName;
             }
 
-            // Render Config Item
+            // Config row
             if (currentY + ItemHeight > _listY && currentY < _listY + listVisibleHeight)
             {
                 if (selected)
-                    UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight), 0.2f, 3, 1f, 1f, UIRender.interfaceTex);
+                    UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight), 0.2f,
+                        3, 1f, 1f, UIRender.interfaceTex);
 
                 var textColor = selected ? Color.Yellow : Color.White;
                 var textY = currentY + ItemHeight * 0.75f;
 
                 Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10, textY), textColor, 0.7f, 0);
-                
+
                 var valStr = FormatValue(cfg, selected);
-                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth, textY), textColor, 0.7f, 0);
+                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth, textY),
+                    textColor, 0.7f, 0);
             }
+
             currentY += ItemHeight;
         }
 
         var action = player.inputProfile.keyMouseEnable ? "[Space]" : "[a]";
-        var help = new StringBuilder($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
+        var help = new StringBuilder(
+            $"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
         // ReSharper disable once PossibleLossOfFraction
         Text.DrawText(help, new Vector2(boxX + boxWidth / 2f, vp.Height - 40), Color.White, 0.6f, 1, player, 1);
     }
@@ -246,32 +285,60 @@ public class LevelModOptions : LevelBase
     private string FormatValue(SaS2ModOptions.RegisteredConfig config, bool selected)
     {
         var entry = GetActiveEntry(config);
+
+        // Color string: show component highlight when actively editing
         if (IsColorString(entry) && selected && _colorCompIndex != -1)
         {
             var p = ((string)entry.BoxedValue).Split(',');
             p[_colorCompIndex] = ">" + p[_colorCompIndex] + "<";
             return string.Join(",", p);
         }
+
+        // Bool
         if (entry.SettingType == typeof(bool)) return ((ConfigEntry<bool>)entry).Value ? "On" : "Off";
+
+        // Float
         if (entry.SettingType == typeof(float)) return ((ConfigEntry<float>)entry).Value.ToString("F2");
+
+        // String with acceptable-values list: show "Value (N/Total)"
+        if (entry.SettingType == typeof(string) &&
+            config.AcceptableValues is { Length: > 0 } values &&
+            !IsColorString(entry))
+        {
+            var current = (string)entry.BoxedValue ?? "";
+            var idx = Array.IndexOf((Array)values, current);
+            var pos = idx >= 0 ? idx + 1 : 1; // snap display to 1 if value is unexpected
+            return $"{current} ({pos}/{values.Length})";
+        }
+
         return entry.BoxedValue?.ToString() ?? "null";
     }
 
     private void EnsureVisible()
     {
         var y = GetItemY(_selectedIndex);
-        if (y < _scrollOffset) _scrollOffset = y;
-        else if (y + ItemHeight > _scrollOffset + (Game1.Instance.GraphicsDevice.Viewport.Height * 0.7f - 80f))
-            _scrollOffset = y + ItemHeight - (Game1.Instance.GraphicsDevice.Viewport.Height * 0.7f - 80f);
+        var viewHeight = Game1.Instance.GraphicsDevice.Viewport.Height * 0.7f - 80f;
+        if (y < _scrollOffset)
+            _scrollOffset = y;
+        else if (y + ItemHeight > _scrollOffset + viewHeight)
+            _scrollOffset = y + ItemHeight - viewHeight;
     }
 
     private float GetItemY(int index)
     {
-        float y = 0; string last = null;
-        for (var i = 0; i <= index; i++) {
-            if (_displayedConfigs[i].ModName != last) { y += last == null ? SectionHeight : SectionHeight + 20f; last = _displayedConfigs[i].ModName; }
+        float y = 0;
+        string last = null;
+        for (var i = 0; i <= index; i++)
+        {
+            if (_displayedConfigs[i].ModName != last)
+            {
+                y += last == null ? SectionHeight : SectionHeight + 20f;
+                last = _displayedConfigs[i].ModName;
+            }
+
             if (i < index) y += ItemHeight;
         }
+
         return y;
     }
 

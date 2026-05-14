@@ -12,7 +12,7 @@ namespace SaS2ModOptions;
 public static class LevelPatch
 {
     private const int IconId = 110; // ICON_GAMEPAD
-    
+
     [HarmonyPatch(typeof(LevelMainMenu), "Update")]
     [HarmonyPrefix]
     // ReSharper disable once InconsistentNaming
@@ -20,7 +20,7 @@ public static class LevelPatch
     {
         if (!__instance.CanInput() || !__instance.player.keys.keyAccept)
             return true;
-        
+
         if (!__instance.player.playerSaveList.readComplete ||
             !__instance.player.playerSaveList.readSuccess)
             return true;
@@ -59,7 +59,7 @@ public static class LevelPatch
     {
         return InsertBeforeKey(instructions.ToList(), 23, IconId, "Mod Options");
     }
-    
+
     [HarmonyPatch(typeof(LevelGameMenu), "Update")]
     [HarmonyPrefix]
     // ReSharper disable once InconsistentNaming
@@ -128,10 +128,13 @@ public static class LevelPatch
                 newCodes.Add(new CodeInstruction(OpCodes.Ldloc_0));
                 newCodes.Add(new CodeInstruction(OpCodes.Ldc_I4, iconId));
                 newCodes.Add(new CodeInstruction(OpCodes.Ldstr, label));
-                newCodes.Add(new CodeInstruction(OpCodes.Callvirt, AccessTools.Method(typeof(Dictionary<int, string>), "Add", [typeof(int), typeof(string)])));
+                newCodes.Add(new CodeInstruction(OpCodes.Callvirt,
+                    AccessTools.Method(typeof(Dictionary<int, string>), "Add", [typeof(int), typeof(string)])));
             }
+
             newCodes.Add(codes[i]);
         }
+
         return newCodes;
     }
 }
