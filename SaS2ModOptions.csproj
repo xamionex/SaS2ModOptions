@@ -5,7 +5,7 @@
         <AssemblyName>amione.SaS2ModOptions</AssemblyName>
         <Product>SaS2ModOptions</Product>
         <ProductDescription>Adds in-game options for some of my other mods, does nothing by itself</ProductDescription>
-        <Version>1.0.4</Version>
+        <Version>1.0.5</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <RestoreAdditionalProjectSources>

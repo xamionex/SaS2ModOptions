@@ -18,7 +18,16 @@ namespace SaS2ModOptions;
 
 public class LevelModOptions : LevelBase
 {
+    // Full sorted config list, doesn't change
+    private List<SaS2ModOptions.RegisteredConfig> _allConfigs;
+
+    // Configs for the currently active tab only
     private List<SaS2ModOptions.RegisteredConfig> _displayedConfigs;
+
+    // Tab state
+    private List<string> _tabs;
+    private int _currentTabIndex;
+
     private int _selectedIndex;
     private float _scrollOffset;
     private readonly int _returnScreen;
@@ -26,15 +35,23 @@ public class LevelModOptions : LevelBase
     private bool _fast;
 
     // UI Constants
+    private const float TabBarHeight = 36f; // height of one tab row
+    private const float TabPadX = 18f; // horizontal text padding inside each tab
     private const float ItemHeight = 40f;
     private const float SectionHeight = 60f;
+    private const float TopMargin = 40f; // space above the tab bar
+    private const float BottomMargin = 40f; // space below the last item=
+
     private float _listX;
     private float _listY;
     private float _listWidth;
-    private const float ValueWidth = 240f; // Widened to fit RGBA strings
+    private const float ValueWidth = 240f;
 
     // Color Editing State
     private int _colorCompIndex = -1; // -1 = none, 0=R, 1=G, 2=B, 3=A
+
+    // Dynamic sizing
+    private float _currentListVisibleHeight;
 
     // 10 = LevelGameMenu, 25 = LevelMainMenu
     public LevelModOptions(Player player, int returnToScreen = 10)
@@ -51,12 +68,35 @@ public class LevelModOptions : LevelBase
         if (!screen.uiFlag.Contains(9)) screen.uiFlag.Add(9);
         _currentPlayerId = plr.ID; // 0 = Player1, 1 = Player2
 
-        _displayedConfigs = SaS2ModOptions.RegisteredConfigs
+        _allConfigs = SaS2ModOptions.RegisteredConfigs
             .OrderBy(c => c.ModName)
             .ThenBy(c => c.Order)
             .ThenBy(c => c.DisplayName)
             .ToList();
+
+        _tabs = _allConfigs.Select(c => c.ModName).Distinct().ToList();
+        _currentTabIndex = 0;
+
+        RefreshDisplayedConfigs();
     }
+
+    private void RefreshDisplayedConfigs()
+    {
+        if (_tabs.Count == 0)
+        {
+            _displayedConfigs = [];
+            return;
+        }
+
+        var tab = _tabs[_currentTabIndex];
+        _displayedConfigs = _allConfigs.Where(c => c.ModName == tab).ToList();
+        _selectedIndex = 0;
+        _scrollOffset = 0f;
+        _colorCompIndex = -1;
+        _fast = false;
+    }
+
+    private bool HasTabs => _tabs.Count > 1;
 
     // Helper to get the correct ConfigEntryBase for the current player
     private ConfigEntryBase GetActiveEntry(SaS2ModOptions.RegisteredConfig cfg) =>
@@ -70,11 +110,33 @@ public class LevelModOptions : LevelBase
     {
         if (!CanInput()) return;
 
+        // Tab navigation
+        if (HasTabs)
+        {
+            if (player.keys.keyCatLeft)
+            {
+                _currentTabIndex = (_currentTabIndex - 1 + _tabs.Count) % _tabs.Count;
+                RefreshDisplayedConfigs();
+                PlaySelect();
+                return;
+            }
+
+            if (player.keys.keyCatRight)
+            {
+                _currentTabIndex = (_currentTabIndex + 1) % _tabs.Count;
+                RefreshDisplayedConfigs();
+                PlaySelect();
+                return;
+            }
+        }
+
+        if (_displayedConfigs.Count == 0) return;
+
         if (player.keys.keyUp || player.keys.keyDown)
         {
             var dir = player.keys.keyUp ? -1 : 1;
             _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
-            _colorCompIndex = -1; // Reset color editing when moving
+            _colorCompIndex = -1;
             PlaySelect();
             EnsureVisible();
             return;
@@ -209,28 +271,108 @@ public class LevelModOptions : LevelBase
 
     private static bool IsBool(ConfigEntryBase entry) => entry.SettingType == typeof(bool);
 
+    /// Calculates tab rows that fit inside boxWidth, and returns total height used.
+    /// Also draws the tabs if draw == true.
+    private float LayoutAndDrawTabs(float boxX, float boxY, float boxWidth, bool draw)
+    {
+        if (!HasTabs) return 0f;
+
+        var tabY = boxY + 6f;
+        var tabH = TabBarHeight - 6f;
+
+        // Pre‑measure each tab width
+        var tabWidths = new float[_tabs.Count];
+        for (var t = 0; t < _tabs.Count; t++)
+            tabWidths[t] = Text.GetStringSpace(new StringBuilder(_tabs[t]), 0.65f, player, 1) + TabPadX * 2f;
+
+        // Build rows
+        var rows = new List<List<int>>(); // list of tab indices per row
+        var currentRow = new List<int>();
+        var currentRowWidth = 0f;
+        const float tabGap = 2f;
+
+        for (var t = 0; t < _tabs.Count; t++)
+        {
+            var w = tabWidths[t];
+            if (currentRow.Count > 0 && currentRowWidth + w + tabGap > boxWidth)
+            {
+                rows.Add(currentRow);
+                currentRow = [];
+                currentRowWidth = 0f;
+            }
+
+            currentRow.Add(t);
+            currentRowWidth += w + (currentRow.Count > 1 ? tabGap : 0f);
+        }
+
+        if (currentRow.Count > 0) rows.Add(currentRow);
+
+        var totalTabHeight = rows.Count * TabBarHeight;
+
+        if (!draw) return totalTabHeight;
+
+        // Draw each row, centered
+        for (var r = 0; r < rows.Count; r++)
+        {
+            var rowIndices = rows[r];
+            var rowTotalWidth = rowIndices.Sum(idx => tabWidths[idx]) + (rowIndices.Count - 1) * tabGap;
+            var startX = boxX + (boxWidth - rowTotalWidth) / 2f;
+            var curX = startX;
+            var rowY = tabY + r * TabBarHeight;
+
+            foreach (var idx in rowIndices)
+            {
+                var tw = tabWidths[idx];
+                var rect = new Rectangle((int)curX, (int)rowY, (int)tw, (int)tabH);
+
+                if (idx == _currentTabIndex)
+                {
+                    UIRender.DrawRect(rect, 0.35f, 3, 1f, 1f, UIRender.interfaceTex);
+                    Text.DrawText(new StringBuilder(_tabs[idx]),
+                        new Vector2(curX + tw / 2f, rowY + tabH * 0.72f),
+                        Color.Yellow, 0.65f, 1);
+                }
+                else
+                {
+                    UIRender.DrawRect(rect, 0.15f, 0, 1f, 1f, UIRender.interfaceTex);
+                    Text.DrawText(new StringBuilder(_tabs[idx]),
+                        new Vector2(curX + tw / 2f, rowY + tabH * 0.72f),
+                        new Color(0.7f, 0.7f, 0.7f, 1f), 0.65f, 1);
+                }
+
+                curX += tw + tabGap;
+            }
+        }
+
+        return totalTabHeight;
+    }
+
     public override void Draw()
     {
         base.Draw();
         var vp = Game1.Instance.GraphicsDevice.Viewport;
-        var boxWidth = Math.Min(1000, vp.Width * 0.8f);
-        var boxHeight = vp.Height * 0.7f;
+        var boxWidth = vp.Width * 0.5f;
+        var boxHeight = vp.Height * 0.8f;
 
         // Always assume local coop; menu takes place in respective player's side
-        var halfWidth = vp.Width * 0.5f;
+        var margin = boxWidth * 0.025f;
         var isMainPlayer = player.ID == GameSessionMgr.gameSession.mainPlayerIdx;
-        var boxX = isMainPlayer
-            ? halfWidth * 0.5f - boxWidth * 0.5f
-            : halfWidth + halfWidth * 0.5f - boxWidth * 0.5f;
+        var boxX = isMainPlayer ? 0f - margin : vp.Width * 0.5f + margin;
         var boxY = (vp.Height - boxHeight) / 2f;
 
         UIRender.DrawRect(new Rectangle((int)boxX, (int)boxY, (int)boxWidth, (int)boxHeight), 0.85f, 0, 1f, 1f,
             UIRender.interfaceTex);
 
+        // Draw tabs
+        var usedTabHeight = LayoutAndDrawTabs(boxX, boxY, boxWidth, true);
+
+        // Config list area
         _listX = boxX + 40f;
-        _listY = boxY + 40f;
+        _listY = boxY + TopMargin + usedTabHeight;
         _listWidth = boxWidth - 80f;
-        var listVisibleHeight = boxHeight - 80f;
+        var listVisibleHeight = boxHeight - TopMargin - usedTabHeight - BottomMargin;
+        _currentListVisibleHeight = listVisibleHeight;
+
         var currentY = _listY - _scrollOffset;
 
         string lastMod = null;
@@ -239,8 +381,8 @@ public class LevelModOptions : LevelBase
             var cfg = _displayedConfigs[i];
             var selected = i == _selectedIndex;
 
-            // Mod section header
-            if (cfg.ModName != lastMod)
+            // Section header (only when there are no tabs)
+            if (!HasTabs && cfg.ModName != lastMod)
             {
                 if (lastMod != null) currentY += 20f;
                 if (currentY + SectionHeight > _listY && currentY < _listY + listVisibleHeight)
@@ -275,11 +417,21 @@ public class LevelModOptions : LevelBase
             currentY += ItemHeight;
         }
 
-        var action = player.inputProfile.keyMouseEnable ? "[Space]" : "[a]";
-        var help = new StringBuilder(
-            $"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
-        // ReSharper disable once PossibleLossOfFraction
-        Text.DrawText(help, new Vector2(boxX + boxWidth / 2f, vp.Height - 40), Color.White, 0.6f, 1, player, 1);
+        DrawHelpBar(boxX, boxWidth, vp.Height);
+    }
+
+    private void DrawHelpBar(float boxX, float boxWidth, float vpHeight)
+    {
+        var useKeyboard = player.inputProfile.keyMouseEnable;
+        var action = useKeyboard ? "[Space]" : "[a]";
+
+        var sb = new StringBuilder();
+        sb.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
+
+        if (HasTabs) sb.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lt]/[rt]\u02f0 Tab");
+
+        Text.DrawText(sb, new Vector2(boxX + boxWidth / 2f, vpHeight - 40),
+            Color.White, 0.6f, 1, player, 1);
     }
 
     private string FormatValue(SaS2ModOptions.RegisteredConfig config, bool selected)
@@ -314,32 +466,50 @@ public class LevelModOptions : LevelBase
         return entry.BoxedValue?.ToString() ?? "null";
     }
 
-    private void EnsureVisible()
-    {
-        var y = GetItemY(_selectedIndex);
-        var viewHeight = Game1.Instance.GraphicsDevice.Viewport.Height * 0.7f - 80f;
-        if (y < _scrollOffset)
-            _scrollOffset = y;
-        else if (y + ItemHeight > _scrollOffset + viewHeight)
-            _scrollOffset = y + ItemHeight - viewHeight;
-    }
-
+    // Scrolling helpers
     private float GetItemY(int index)
     {
         float y = 0;
         string last = null;
-        for (var i = 0; i <= index; i++)
-        {
-            if (_displayedConfigs[i].ModName != last)
-            {
-                y += last == null ? SectionHeight : SectionHeight + 20f;
-                last = _displayedConfigs[i].ModName;
-            }
 
-            if (i < index) y += ItemHeight;
+        if (!HasTabs)
+        {
+            for (var i = 0; i <= index; i++)
+            {
+                if (_displayedConfigs[i].ModName != last)
+                {
+                    y += last == null ? SectionHeight : SectionHeight + 20f;
+                    last = _displayedConfigs[i].ModName;
+                }
+
+                if (i < index) y += ItemHeight;
+            }
+        }
+        else
+        {
+            y = index * ItemHeight;
         }
 
         return y;
+    }
+
+    private void EnsureVisible()
+    {
+        if (_displayedConfigs.Count == 0) return;
+
+        var itemTop = GetItemY(_selectedIndex);
+        var itemBottom = itemTop + ItemHeight;
+
+        // Use the visible area that was computed during the last Draw()
+        var visibleTop = _scrollOffset;
+        var visibleBottom = _scrollOffset + _currentListVisibleHeight;
+
+        if (itemTop < visibleTop)
+            _scrollOffset = itemTop;
+        else if (itemBottom > visibleBottom)
+            _scrollOffset = itemBottom - _currentListVisibleHeight;
+
+        _scrollOffset = Math.Max(0f, _scrollOffset);
     }
 
     private new void PlaySelect() => AccessTools.Method(typeof(LevelBase), "PlaySelect")?.Invoke(this, null);
