@@ -10,6 +10,7 @@ using Menumancer.hud;
 using Menumancer.UIFormat;
 using ProjectMage;
 using ProjectMage.character;
+using ProjectMage.config;
 using ProjectMage.gamestate;
 using ProjectMage.player;
 using ProjectMage.player.menu;
@@ -50,8 +51,23 @@ public class LevelModOptions : LevelBase
     // Color Editing State
     private int _colorCompIndex = -1; // -1 = none, 0=R, 1=G, 2=B, 3=A
 
+    // Keybind capture state. Non-null while waiting for the user to press a key/button to rebind.
+    private SaS2ModOptions.RegisteredConfig _rebindingConfig;
+    private Keybind.Capture _rebindCapture;
+
     // Dynamic sizing
     private float _currentListVisibleHeight;
+
+    // Mouse hit-test rects recorded during Draw() and consumed by the next Update().
+    // Mouse input only applies to the player whose ID == 0 (see MouseMgr), matching vanilla.
+    private struct ItemHit
+    {
+        public int Index;
+        public Rectangle Rect;
+    }
+
+    private Rectangle[] _tabHitRects;
+    private readonly List<ItemHit> _itemHitRects = [];
 
     // 10 = LevelGameMenu, 25 = LevelMainMenu
     public LevelModOptions(Player player, int returnToScreen = 10)
@@ -110,6 +126,18 @@ public class LevelModOptions : LevelBase
     {
         if (!CanInput()) return;
 
+        // While rebinding, capture the next key press and ignore all other input.
+        if (_rebindingConfig != null)
+        {
+            HandleRebindCapture();
+            return;
+        }
+
+        // Mouse navigation (player 0 only). Returns true when it consumes a discrete
+        // action (tab click, value click, scroll) so keyboard handling is skipped this frame.
+        // Pure hover-select updates the selection but lets keyboard input continue.
+        if (HandleMouseInput()) return;
+
         // Tab navigation
         if (HasTabs)
         {
@@ -146,7 +174,33 @@ public class LevelModOptions : LevelBase
         var activeEntry = GetActiveEntry(config);
         var isColor = IsColorString(activeEntry);
         var isBool = IsBool(activeEntry);
+        var isKeybind = config.IsKeybind;
         var valueChanged = false;
+
+        // Reset to default: X-option (Backspace / controller X) works on any option type.
+        if (player.keys.keyXOption)
+        {
+            ResetOption(config);
+            PlaySelect();
+            return;
+        }
+
+        // Keybind: Accept enters capture mode; Y-option (Tab / controller Y) toggles enable/disable.
+        if (isKeybind)
+        {
+            if (player.keys.keyAccept)
+            {
+                BeginRebind(config);
+                return;
+            }
+
+            if (player.keys.keyYOption)
+            {
+                config.Keybind.ToggleEnabled();
+                PlaySelect();
+                return;
+            }
+        }
 
         // Color Picker: Accept cycles R -> G -> B -> A -> Off
         if (player.keys.keyAccept && isColor)
@@ -157,7 +211,7 @@ public class LevelModOptions : LevelBase
             return;
         }
 
-        if (player.keys.keyLeft || player.keys.keyRight || isBool && player.keys.keyAccept)
+        if ((player.keys.keyLeft || player.keys.keyRight || isBool && player.keys.keyAccept) && !isKeybind)
         {
             var right = player.keys.keyRight;
             if (isColor && _colorCompIndex != -1)
@@ -167,7 +221,7 @@ public class LevelModOptions : LevelBase
 
             valueChanged = true;
         }
-        else if (player.keys.keyAccept && !isColor)
+        else if (player.keys.keyAccept && !isColor && !isKeybind)
         {
             _fast = !_fast;
         }
@@ -184,6 +238,175 @@ public class LevelModOptions : LevelBase
             Deactivate();
             player.menu.GetLevelByScreen(_returnScreen).Activate();
         }
+    }
+
+    // Mouse navigation for player 0. Reads MouseMgr public state and the hit-test rects
+    // recorded during the previous Draw(). Mirrors vanilla CheckMouseHover: hover only
+    // re-selects while the cursor is actually moving (MouseMgr.moveFrame > 0), so it never
+    // fights keyboard/controller navigation when the cursor is at rest.
+    // Returns true when a discrete action (tab/value click or scroll) was performed.
+    private bool HandleMouseInput()
+    {
+        // The mouse belongs to the keyboard player (ID 0) only, matching MouseMgr.
+        if (player.ID != 0 || !MouseMgr.isActive) return false;
+
+        var moved = MouseMgr.moveFrame > 0f;
+        var clickActive = GameStateManager.activeFocus;
+        var leftClick = clickActive && MouseMgr.isLeftClick;
+        var rightClick = clickActive && MouseMgr.isRightClick;
+
+        // Scroll wheel moves the selection, like up/down.
+        if ((MouseMgr.isScrollUp || MouseMgr.isScrollDown) && _displayedConfigs.Count > 0)
+        {
+            var dir = MouseMgr.isScrollUp ? -1 : 1;
+            _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
+            _colorCompIndex = -1;
+            PlaySelect();
+            EnsureVisible();
+            return true;
+        }
+
+        var mouse = MouseMgr.mLoc;
+
+        // Tab clicks switch tabs.
+        if (HasTabs && leftClick && _tabHitRects != null)
+        {
+            for (var t = 0; t < _tabHitRects.Length && t < _tabs.Count; t++)
+            {
+                if (!PointInRect(mouse, _tabHitRects[t])) continue;
+                player.menu.mouseInRect = true;
+                if (t != _currentTabIndex)
+                {
+                    _currentTabIndex = t;
+                    RefreshDisplayedConfigs();
+                    PlaySelect();
+                }
+
+                return true;
+            }
+        }
+
+        if (_displayedConfigs.Count == 0) return false;
+
+        // Item hover / click.
+        foreach (var hit in _itemHitRects)
+        {
+            if (!PointInRect(mouse, hit.Rect)) continue;
+
+            // Resting cursor over the list: do nothing, let keyboard/controller drive.
+            if (!moved && !leftClick && !rightClick) return false;
+
+            player.menu.mouseInRect = true;
+
+            // Moving the cursor selects the row underneath it.
+            if (moved && hit.Index != _selectedIndex)
+            {
+                _selectedIndex = hit.Index;
+                _colorCompIndex = -1;
+                PlaySelect();
+            }
+
+            if (!leftClick && !rightClick) return false; // hover only, no value change
+
+            // A click acts on the clicked row: left = increase, right = decrease.
+            if (hit.Index != _selectedIndex)
+            {
+                _selectedIndex = hit.Index;
+                _colorCompIndex = -1;
+            }
+
+            var config = _displayedConfigs[_selectedIndex];
+            var entry = GetActiveEntry(config);
+
+            // Keybind: left click enters capture mode; right click resets to default.
+            if (config.IsKeybind)
+            {
+                if (leftClick) BeginRebind(config);
+                else if (rightClick)
+                {
+                    config.Keybind.ResetToDefault();
+                    PlaySelect();
+                }
+
+                return true;
+            }
+
+            // Colour picker: when a component is active (entered via Accept), click nudges it;
+            // otherwise behave like a normal value change.
+            if (IsColorString(entry) && _colorCompIndex != -1)
+                ModifyColorComponent(config, _colorCompIndex, leftClick);
+            else
+                ModifyValue(config, leftClick, _fast);
+
+            GetActiveEntry(config).ConfigFile.Save();
+            PlaySelect();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool PointInRect(Vector2 p, Rectangle r) =>
+        p.X > r.X && p.X < r.Right && p.Y > r.Y && p.Y < r.Bottom;
+
+    // The gamepad assigned to this menu's player (falls back to pad 0 for keyboard players),
+    // used when capturing controller combos.
+    private GamePadState GetPlayerGamePad()
+    {
+        var idx = player.inputProfile?.gamepadIdx ?? -1;
+        if (idx < 0) idx = 0;
+        var gps = GlobalInputMgr.gps;
+        return gps != null && idx < gps.Length ? gps[idx] : default;
+    }
+
+    // Reset an option to its registered default. Keybinds restore their default combo (and
+    // re-enable); every other option restores the config entry's default value.
+    private void ResetOption(SaS2ModOptions.RegisteredConfig config)
+    {
+        if (config.IsKeybind)
+        {
+            config.Keybind.ResetToDefault();
+            return;
+        }
+
+        var entry = GetActiveEntry(config);
+        entry.BoxedValue = config.GlobalEntry.DefaultValue;
+        entry.ConfigFile.Save();
+        _colorCompIndex = -1;
+    }
+
+    // Enter keybind capture mode. Inputs held right now (e.g. the Accept key/button) are ignored
+    // until released; the combo commits only once all capture inputs are released.
+    private void BeginRebind(SaS2ModOptions.RegisteredConfig config)
+    {
+        _rebindingConfig = config;
+        _rebindCapture = new Keybind.Capture(GlobalInputMgr.ks, GetPlayerGamePad());
+        PlayAccept();
+    }
+
+    // Drive the capture each frame; commit on release. Escape cancels.
+    private void HandleRebindCapture()
+    {
+        var ks = GlobalInputMgr.ks;
+        if (ks.IsKeyDown(Keys.Escape))
+        {
+            EndRebind();
+            PlayCancel();
+            return;
+        }
+
+        if (_rebindCapture.Poll(ks, GetPlayerGamePad(), _rebindingConfig.Keybind))
+        {
+            _rebindingConfig.Keybind.Save();
+            EndRebind();
+            PlayAccept();
+        }
+    }
+
+    private void EndRebind()
+    {
+        _rebindingConfig = null;
+        _rebindCapture = null;
     }
 
     private void ModifyValue(SaS2ModOptions.RegisteredConfig config, bool increase, bool fast = false)
@@ -280,7 +503,7 @@ public class LevelModOptions : LevelBase
         var tabY = boxY + 6f;
         var tabH = TabBarHeight - 6f;
 
-        // Pre‑measure each tab width
+        // Pre-measure each tab width
         var tabWidths = new float[_tabs.Count];
         for (var t = 0; t < _tabs.Count; t++)
             tabWidths[t] = Text.GetStringSpace(new StringBuilder(_tabs[t]), 0.65f, player, 1) + TabPadX * 2f;
@@ -311,6 +534,10 @@ public class LevelModOptions : LevelBase
 
         if (!draw) return totalTabHeight;
 
+        // (Re)build the tab hit-test table for mouse clicks.
+        if (_tabHitRects == null || _tabHitRects.Length != _tabs.Count)
+            _tabHitRects = new Rectangle[_tabs.Count];
+
         // Draw each row, centered
         for (var r = 0; r < rows.Count; r++)
         {
@@ -324,6 +551,7 @@ public class LevelModOptions : LevelBase
             {
                 var tw = tabWidths[idx];
                 var rect = new Rectangle((int)curX, (int)rowY, (int)tw, (int)tabH);
+                _tabHitRects[idx] = rect;
 
                 if (idx == _currentTabIndex)
                 {
@@ -375,6 +603,9 @@ public class LevelModOptions : LevelBase
 
         var currentY = _listY - _scrollOffset;
 
+        // Rebuild the item hit-test table each frame for mouse hover/click.
+        _itemHitRects.Clear();
+
         string lastMod = null;
         for (var i = 0; i < _displayedConfigs.Count; i++)
         {
@@ -400,6 +631,12 @@ public class LevelModOptions : LevelBase
             // Config row
             if (currentY + ItemHeight > _listY && currentY < _listY + listVisibleHeight)
             {
+                _itemHitRects.Add(new ItemHit
+                {
+                    Index = i,
+                    Rect = new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight)
+                });
+
                 if (selected)
                     UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight), 0.2f,
                         3, 1f, 1f, UIRender.interfaceTex);
@@ -424,19 +661,34 @@ public class LevelModOptions : LevelBase
     {
         var useKeyboard = player.inputProfile.keyMouseEnable;
         var action = useKeyboard ? "[Space]" : "[a]";
+        var centerX = boxX + boxWidth / 2f;
 
-        var sb = new StringBuilder();
-        sb.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
+        var selectedKeybind = _displayedConfigs is { Count: > 0 } && _selectedIndex >= 0 &&
+                              _selectedIndex < _displayedConfigs.Count &&
+                              _displayedConfigs[_selectedIndex].IsKeybind;
 
-        if (HasTabs) sb.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lt]/[rt]\u02f0 Tab");
+        // Line 1: edit / change / reset (/ enable toggle for keybinds).
+        var top = new StringBuilder();
+        top.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  ");
+        top.Append(useKeyboard ? "\u02efBksp\u02f0 Reset" : "\u02ef[x]\u02f0 Reset");
+        if (selectedKeybind)
+            top.Append(useKeyboard ? "  |  \u02efTab\u02f0 On/Off" : "  |  \u02ef[y]\u02f0 On/Off");
+        Text.DrawText(top, new Vector2(centerX, vpHeight - 62), Color.White, 0.6f, 1, player, 1);
 
-        Text.DrawText(sb, new Vector2(boxX + boxWidth / 2f, vpHeight - 40),
-            Color.White, 0.6f, 1, player, 1);
+        // Line 2: back / tab (kept on their own line so the bar does not get too wide).
+        var bottom = new StringBuilder();
+        bottom.Append("\u02ef[b]\u02f0 Back");
+        if (HasTabs) bottom.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lt]/[rt]\u02f0 Tab");
+        Text.DrawText(bottom, new Vector2(centerX, vpHeight - 38), Color.White, 0.6f, 1, player, 1);
     }
 
     private string FormatValue(SaS2ModOptions.RegisteredConfig config, bool selected)
     {
         var entry = GetActiveEntry(config);
+
+        // Keybind: show the bound combo, or a prompt while capturing.
+        if (config.IsKeybind)
+            return _rebindingConfig == config ? "Press input... (Esc)" : config.Keybind.DisplayString();
 
         // Color string: show component highlight when actively editing
         if (IsColorString(entry) && selected && _colorCompIndex != -1)

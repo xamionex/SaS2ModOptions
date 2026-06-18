@@ -107,19 +107,38 @@ public class SaS2ModOptions : BasePlugin
         RegisterConfig(entry, modName, displayName, order, false);
     }
 
+    /// <summary>
+    /// Register a rebindable key/button combo to appear in the Mod Options menu.
+    /// The combo is stored in a string config entry (format "KbMod|KbKey|PadMod|PadButton");
+    /// passing the entry (rather than a Keybind instance) keeps callers free of a hard
+    /// dependency on this assembly's <see cref="Keybind"/> type, so they can keep their own copy.
+    /// In the menu the row shows the current combo; Accept (or left-click) enters capture mode
+    /// where the next pressed keyboard or gamepad combo is bound (Escape cancels).
+    /// </summary>
+    // ReSharper disable once UnusedMember.Global
+    public static void RegisterKeybind(ConfigEntry<string> entry, string modName, string displayName, int order = 0)
+    {
+        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, displayName, order, false, null, new Keybind(entry)));
+    }
+
     public class RegisteredConfig(
         ConfigEntryBase entry,
         string modName,
         string displayName,
         int order,
         bool perPlayer,
-        string[] acceptableValues = null)
+        string[] acceptableValues = null,
+        Keybind keybind = null)
     {
         public ConfigEntryBase GlobalEntry { get; } = entry;
         public string ModName { get; } = modName;
         public string DisplayName { get; } = displayName;
         public int Order { get; } = order;
         public bool IsPerPlayer { get; } = perPlayer;
+
+        /// Non-null when this row is a rebindable key/button combo (see Keybind).
+        public Keybind Keybind { get; } = keybind;
+        public bool IsKeybind => Keybind != null;
 
         /// <summary>
         /// When non-null and the entry type is <see cref="string"/>, Left/Right cycle through
