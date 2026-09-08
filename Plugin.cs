@@ -97,14 +97,14 @@ public class SaS2ModOptions : BasePlugin
     public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, int order = 0,
         bool perPlayer = false, string[] acceptableValues = null)
     {
-        RegisterConfig(entry, modName, displayName, order, perPlayer, acceptableValues, false);
+        RegisterConfig(entry, modName, null, displayName, order, perPlayer, acceptableValues, false);
     }
 
     /// <summary>
     /// Register a config entry to appear in the Mod Options menu.
     /// </summary>
     /// <param name="entry">The BepInEx config entry to expose.</param>
-    /// <param name="modName">Section header shown in the menu (typically your mod's name).</param>
+    /// <param name="modName">Mod name shown in the top tab row.</param>
     /// <param name="displayName">Label shown next to the value.</param>
     /// <param name="order">Ascending sort order within the section.</param>
     /// <param name="perPlayer">
@@ -122,14 +122,40 @@ public class SaS2ModOptions : BasePlugin
     public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, int order = 0,
         bool perPlayer = false, string[] acceptableValues = null, bool showAsPercent = false)
     {
-        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, displayName, order, perPlayer, acceptableValues, null, showAsPercent));
+        RegisterConfig(entry, modName, null, displayName, order, perPlayer, acceptableValues, showAsPercent);
     }
     
-    // Backward-compatible overload (4 params), calls the 7-param version with all defaults
+    // Backward-compatible overload (4 params)
     // ReSharper disable once UnusedMember.Global
     public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, int order)
     {
-        RegisterConfig(entry, modName, displayName, order, false, null, false);
+        RegisterConfig(entry, modName, null, displayName, order, false, null, false);
+    }
+
+    /// <summary>
+    /// Register a config entry to appear in the Mod Options menu.
+    /// </summary>
+    /// <param name="entry">The BepInEx config entry to expose.</param>
+    /// <param name="modName">Mod name shown in the top tab row.</param>
+    /// <param name="category">Category shown in the second tab row. When null, the mod name is used.</param>
+    /// <param name="displayName">Label shown next to the value.</param>
+    /// <param name="order">Ascending sort order within the section.</param>
+    /// <param name="perPlayer">
+    ///     When true, each local-coop player gets their own independent copy of the setting.
+    /// </param>
+    /// <param name="acceptableValues">
+    ///     Optional list of valid string values for <see cref="ConfigEntry{T}"/> entries whose type is <see cref="string"/>.
+    ///     When provided, Left/Right cycle through the list.
+    ///     Color strings (four comma-separated numbers) are handled separately and ignore this.
+    /// </param>
+    /// <param name="showAsPercent">
+    ///     When true and the entry type is <see cref="float"/>, the value is displayed as a percentage (1.0 = 100%) instead of a raw float.
+    /// </param>
+    // ReSharper disable once UnusedMember.Global
+    public static void RegisterConfig(ConfigEntryBase entry, string modName, string category, string displayName, int order = 0,
+        bool perPlayer = false, string[] acceptableValues = null, bool showAsPercent = false)
+    {
+        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, category, displayName, order, perPlayer, acceptableValues, null, showAsPercent));
     }
 
     /// <summary>
@@ -143,12 +169,27 @@ public class SaS2ModOptions : BasePlugin
     // ReSharper disable once UnusedMember.Global
     public static void RegisterKeybind(ConfigEntry<string> entry, string modName, string displayName, int order = 0)
     {
-        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, displayName, order, false, null, new Keybind(entry)));
+        RegisterKeybind(entry, modName, null, displayName, order);
+    }
+
+    /// <summary>
+    /// Register a rebindable key/button combo to appear in the Mod Options menu.
+    /// The combo is stored in a string config entry (format "KbMod|KbKey|PadMod|PadButton");
+    /// passing the entry (rather than a Keybind instance) keeps callers free of a hard
+    /// dependency on this assembly's <see cref="Keybind"/> type, so they can keep their own copy.
+    /// In the menu the row shows the current combo; Accept (or left-click) enters capture mode
+    /// where the next pressed keyboard or gamepad combo is bound (Escape cancels).
+    /// </summary>
+    // ReSharper disable once UnusedMember.Global
+    public static void RegisterKeybind(ConfigEntry<string> entry, string modName, string category, string displayName, int order = 0)
+    {
+        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, category, displayName, order, false, null, new Keybind(entry)));
     }
 
     public class RegisteredConfig(
         ConfigEntryBase entry,
         string modName,
+        string category,
         string displayName,
         int order,
         bool perPlayer,
@@ -158,6 +199,7 @@ public class SaS2ModOptions : BasePlugin
     {
         public ConfigEntryBase GlobalEntry { get; } = entry;
         public string ModName { get; } = modName;
+        public string Category { get; } = category ?? modName;
         public string DisplayName { get; } = displayName;
         public int Order { get; } = order;
         public bool IsPerPlayer { get; } = perPlayer;
