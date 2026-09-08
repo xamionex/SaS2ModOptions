@@ -702,7 +702,12 @@ public class LevelModOptions : LevelBase
         if (entry.SettingType == typeof(bool)) return ((ConfigEntry<bool>)entry).Value ? "On" : "Off";
 
         // Float
-        if (entry.SettingType == typeof(float)) return ((ConfigEntry<float>)entry).Value.ToString("F2");
+        if (entry.SettingType == typeof(float))
+        {
+            var value = ((ConfigEntry<float>)entry).Value;
+            if (config.IsPercent) return $"{Math.Round(value * 100f)}%";
+            return value.ToString("F2");
+        }
 
         // String with acceptable-values list: show "Value (N/Total)"
         if (entry.SettingType == typeof(string) &&

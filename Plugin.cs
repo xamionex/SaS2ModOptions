@@ -89,22 +89,47 @@ public class SaS2ModOptions : BasePlugin
     ///     When true, each local-coop player gets their own independent copy of the setting.
     /// </param>
     /// <param name="acceptableValues">
-    ///     Optional list of valid string values for <see cref="ConfigEntry{T}"/> entries whose
-    ///     type is <see cref="string"/>. When provided, Left/Right cycle through the list.
+    ///     Optional list of valid string values for <see cref="ConfigEntry{T}"/> entries whose type is <see cref="string"/>.
+    ///     When provided, Left/Right cycle through the list.
     ///     Color strings (four comma-separated numbers) are handled separately and ignore this.
     /// </param>
     // ReSharper disable once UnusedMember.Global
     public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, int order = 0,
         bool perPlayer = false, string[] acceptableValues = null)
     {
-        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, displayName, order, perPlayer, acceptableValues));
+        RegisterConfig(entry, modName, displayName, order, perPlayer, acceptableValues, false);
+    }
+
+    /// <summary>
+    /// Register a config entry to appear in the Mod Options menu.
+    /// </summary>
+    /// <param name="entry">The BepInEx config entry to expose.</param>
+    /// <param name="modName">Section header shown in the menu (typically your mod's name).</param>
+    /// <param name="displayName">Label shown next to the value.</param>
+    /// <param name="order">Ascending sort order within the section.</param>
+    /// <param name="perPlayer">
+    ///     When true, each local-coop player gets their own independent copy of the setting.
+    /// </param>
+    /// <param name="acceptableValues">
+    ///     Optional list of valid string values for <see cref="ConfigEntry{T}"/> entries whose type is <see cref="string"/>.
+    ///     When provided, Left/Right cycle through the list.
+    ///     Color strings (four comma-separated numbers) are handled separately and ignore this.
+    /// </param>
+    /// <param name="showAsPercent">
+    ///     When true and the entry type is <see cref="float"/>, the value is displayed as a percentage (1.0 = 100%) instead of a raw float.
+    /// </param>
+    // ReSharper disable once UnusedMember.Global
+    public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, int order = 0,
+        bool perPlayer = false, string[] acceptableValues = null, bool showAsPercent = false)
+    {
+        RegisteredConfigs.Add(new RegisteredConfig(entry, modName, displayName, order, perPlayer, acceptableValues, null, showAsPercent));
     }
     
-    // Backward-compatible overload (4 params), calls the 5-param version with perPlayer = false
+    // Backward-compatible overload (4 params), calls the 7-param version with all defaults
     // ReSharper disable once UnusedMember.Global
     public static void RegisterConfig(ConfigEntryBase entry, string modName, string displayName, int order)
     {
-        RegisterConfig(entry, modName, displayName, order, false);
+        RegisterConfig(entry, modName, displayName, order, false, null, false);
     }
 
     /// <summary>
@@ -128,7 +153,8 @@ public class SaS2ModOptions : BasePlugin
         int order,
         bool perPlayer,
         string[] acceptableValues = null,
-        Keybind keybind = null)
+        Keybind keybind = null,
+        bool showAsPercent = false)
     {
         public ConfigEntryBase GlobalEntry { get; } = entry;
         public string ModName { get; } = modName;
@@ -140,9 +166,11 @@ public class SaS2ModOptions : BasePlugin
         public Keybind Keybind { get; } = keybind;
         public bool IsKeybind => Keybind != null;
 
+        /// When true and the entry type is <see cref="float"/>, the value is displayed as a percentage.
+        public bool IsPercent { get; } = showAsPercent;
+
         /// <summary>
-        /// When non-null and the entry type is <see cref="string"/>, Left/Right cycle through
-        /// these values in the Mod Options menu.
+        /// When non-null and the entry type is <see cref="string"/>, Left/Right cycle through these values in the Mod Options menu.
         /// </summary>
         public string[] AcceptableValues { get; } = acceptableValues;
 
