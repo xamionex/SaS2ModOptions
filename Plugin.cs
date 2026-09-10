@@ -16,6 +16,11 @@ public class SaS2ModOptions : BasePlugin
 {
     internal static SaS2ModOptions Instance;
     internal static readonly List<RegisteredConfig> RegisteredConfigs = [];
+    internal static ConfigEntry<bool> WrapDown;
+    internal static ConfigEntry<bool> WrapUp;
+    internal static ConfigEntry<bool> RememberLastPosition;
+    internal static ConfigEntry<bool> DodgeBlockSwitchMods;
+    internal static ConfigEntry<float> MenuScale;
     private Harmony _harmony;
     private FileSystemWatcher _configWatcher;
     private Timer _debounceTimer;
@@ -23,6 +28,24 @@ public class SaS2ModOptions : BasePlugin
     public override void Load()
     {
         Instance = this;
+
+        WrapDown = Config.Bind("Navigation", "WrapDown", true,
+            "When on, pressing down on the last option wraps around to the top of the menu.");
+        WrapUp = Config.Bind("Navigation", "WrapUp", true,
+            "When on, pressing up on the top tab row wraps around to the bottom of the menu.");
+        RememberLastPosition = Config.Bind("Navigation", "RememberLastPosition", true,
+            "When on, reopening the menu restores the last selected mod, category and option.");
+        DodgeBlockSwitchMods = Config.Bind("Navigation", "DodgeBlockSwitchMods", true,
+            "When on, Dodge (LeftShift / R2) switches to the previous mod tab and Block (LeftCtrl / L2) switches to the next mod tab.");
+        MenuScale = Config.Bind("Appearance", "MenuScale", 1.0f,
+            "Scales the Mod Options menu. 1.0 = default size.");
+
+        RegisterConfig(WrapDown, "Mod Options", "Navigation", "Wrap Around When Going Down", 1);
+        RegisterConfig(WrapUp, "Mod Options", "Navigation", "Wrap Around When Going Up", 2);
+        RegisterConfig(RememberLastPosition, "Mod Options", "Navigation", "Remember Last Position", 3);
+        RegisterConfig(DodgeBlockSwitchMods, "Mod Options", "Navigation", "Dodge/Block Switch Mods", 4);
+        RegisterConfig(MenuScale, "Mod Options", "Appearance", "Menu Scale", 1);
+
         var configDirectory = Path.GetDirectoryName(Config.ConfigFilePath);
         var configFileName = Path.GetFileName(Config.ConfigFilePath);
         if (!string.IsNullOrEmpty(configDirectory))

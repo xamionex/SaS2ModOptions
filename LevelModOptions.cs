@@ -46,6 +46,11 @@ public class LevelModOptions : LevelBase
     private int _currentPlayerId;
     private bool _fast;
 
+    // Last-position memory, shared across menu instances so reopening the menu restores the previous mod, category and selected option.
+    private static int _lastModIndex;
+    private static readonly Dictionary<string, int> _lastCatByMod = new();
+    private static readonly Dictionary<string, int> _lastSelectedByCat = new();
+
     // UI Constants
     private const float TabBarHeight = 36f; // height of one tab row
     private const float TabPadX = 18f; // horizontal text padding inside each tab
@@ -103,11 +108,23 @@ public class LevelModOptions : LevelBase
             .ToList();
 
         _modTabs = _allConfigs.Select(c => c.ModName).Distinct().ToList();
-        _currentModIndex = 0;
+        _currentModIndex = SaS2ModOptions.RememberLastPosition.Value && _lastModIndex < _modTabs.Count
+            ? _lastModIndex
+            : 0;
         _currentCatIndex = 0;
-        _tabFocus = TabFocus.Mods;
+        // Start on the list so Z/X does not switch mods right away on open.
+        _tabFocus = TabFocus.List;
 
         RefreshDisplayedConfigs();
+
+        // Restore the last category for the restored mod.
+        if (SaS2ModOptions.RememberLastPosition.Value && _modTabs.Count > 0 &&
+            _lastCatByMod.TryGetValue(_modTabs[_currentModIndex], out var lastCat) &&
+            lastCat < _catTabs.Count)
+        {
+            _currentCatIndex = lastCat;
+            RefreshDisplayedConfigs();
+        }
     }
 
     private void RefreshDisplayedConfigs()
@@ -130,7 +147,15 @@ public class LevelModOptions : LevelBase
 
         var cat = _catTabs[_currentCatIndex];
         _displayedConfigs = _allConfigs.Where(c => c.ModName == mod && c.Category == cat).ToList();
-        _selectedIndex = 0;
+
+        // Restore the last selected option for this category when remembering is on.
+        var catKey = mod + "/" + cat;
+        if (SaS2ModOptions.RememberLastPosition.Value && _lastSelectedByCat.TryGetValue(catKey, out var lastSel)
+            && lastSel < _displayedConfigs.Count)
+            _selectedIndex = lastSel;
+        else
+            _selectedIndex = 0;
+
         _scrollOffset = 0f;
         _colorCompIndex = -1;
         _fast = false;
@@ -143,6 +168,7 @@ public class LevelModOptions : LevelBase
     {
         _currentModIndex = (_currentModIndex + dir + _modTabs.Count) % _modTabs.Count;
         _currentCatIndex = 0;
+        _lastModIndex = _currentModIndex;
         RefreshDisplayedConfigs();
         // The new mod may not have a category row; drop focus to the list in that case.
         if (_tabFocus == TabFocus.Cats && _catTabs.Count <= 1)
@@ -162,12 +188,20 @@ public class LevelModOptions : LevelBase
                 return;
             }
             _currentCatIndex = next;
+            RememberCategory();
             RefreshDisplayedConfigs();
             return;
         }
 
         // Single category: wrap into the next/previous mod.
         SwitchMod(dir);
+    }
+
+    /// Records the current mod/category pair for the Remember Last Position feature.
+    private void RememberCategory()
+    {
+        if (_modTabs.Count > 0 && _currentModIndex < _modTabs.Count)
+            _lastCatByMod[_modTabs[_currentModIndex]] = _currentCatIndex;
     }
 
     // Helper to get the correct ConfigEntryBase for the current player
@@ -189,10 +223,26 @@ public class LevelModOptions : LevelBase
             return;
         }
 
-        // Mouse navigation (player 0 only). Returns true when it consumes a discrete
-        // action (tab click, value click, scroll) so keyboard handling is skipped this frame.
+        // Mouse navigation (player 0 only). Returns true when it consumes a discrete action (tab click, value click, scroll) so keyboard handling is skipped this frame.
         // Pure hover-select updates the selection but lets keyboard input continue.
         if (HandleMouseInput()) return;
+
+        // LeftShift / R2 switches to the previous mod tab, LeftCtrl / L2 switches to the next mod tab, from anywhere in the menu.
+        if (SaS2ModOptions.DodgeBlockSwitchMods.Value && _modTabs.Count > 1)
+        {
+            var mapping = player.inputProfile?.inputMapping;
+            if (mapping != null && mapping.Length > 9)
+            {
+                var dodgePressed = mapping[8].pressed && !mapping[8].prevPressed;
+                var blockPressed = mapping[9].pressed && !mapping[9].prevPressed;
+                if (dodgePressed || blockPressed)
+                {
+                    SwitchMod(blockPressed ? 1 : -1);
+                    PlaySelect();
+                    return;
+                }
+            }
+        }
 
         // Tab navigation: Z/X switches tabs in the hovered row, or in the default row when nothing is hovered.
         // Categories wrap into the next/previous mod at the ends.
@@ -235,6 +285,19 @@ public class LevelModOptions : LevelBase
             switch (_tabFocus)
             {
                 case TabFocus.Mods:
+                    if (up)
+                    {
+                        // Wrap up: jump from the tab row to the bottom of the list.
+                        if (SaS2ModOptions.WrapUp.Value && _displayedConfigs.Count > 0)
+                        {
+                            _tabFocus = TabFocus.List;
+                            SetSelected(_displayedConfigs.Count - 1);
+                            PlaySelect();
+                            EnsureVisible();
+                            return;
+                        }
+                        return;
+                    }
                     // Down enters the category row, or the list when there is only one category.
                     _tabFocus = _catTabs.Count > 1 ? TabFocus.Cats : TabFocus.List;
                     PlaySelect();
@@ -252,18 +315,38 @@ public class LevelModOptions : LevelBase
                     return;
 
                 case TabFocus.List:
+                    if (_displayedConfigs.Count == 0) return;
                     if (up && _selectedIndex == 0)
                     {
+                        // Move up into the tab rows; wrap up happens from the mod row instead.
                         _tabFocus = _catTabs.Count > 1 ? TabFocus.Cats : TabFocus.Mods;
                         PlaySelect();
                         return;
                     }
-                    if (_displayedConfigs.Count == 0) return;
                     break;
             }
 
-            var dir = up ? -1 : 1;
-            _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
+            if (_displayedConfigs.Count == 0) return;
+
+            if (up)
+            {
+                if (_selectedIndex > 0)
+                    SetSelected(_selectedIndex - 1);
+                else if (SaS2ModOptions.WrapUp.Value)
+                    SetSelected(_displayedConfigs.Count - 1);
+                else
+                    return;
+            }
+            else
+            {
+                if (_selectedIndex < _displayedConfigs.Count - 1)
+                    SetSelected(_selectedIndex + 1);
+                else if (SaS2ModOptions.WrapDown.Value)
+                    SetSelected(0);
+                else
+                    return;
+            }
+
             _colorCompIndex = -1;
             PlaySelect();
             EnsureVisible();
@@ -340,10 +423,8 @@ public class LevelModOptions : LevelBase
         }
     }
 
-    // Mouse navigation for player 0. Reads MouseMgr public state and the hit-test rects
-    // recorded during the previous Draw(). Mirrors vanilla CheckMouseHover: hover only
-    // re-selects while the cursor is actually moving (MouseMgr.moveFrame > 0), so it never
-    // fights keyboard/controller navigation when the cursor is at rest.
+    // Mouse navigation for player 0. Reads MouseMgr public state and the hit-test rects recorded during the previous Draw().
+    // Mirrors vanilla CheckMouseHover: hover only re-selects while the cursor is actually moving (MouseMgr.moveFrame > 0), so it never fights keyboard/controller navigation when the cursor is at rest.
     // Returns true when a discrete action (tab/value click or scroll) was performed.
     private bool HandleMouseInput()
     {
@@ -358,8 +439,26 @@ public class LevelModOptions : LevelBase
         // Scroll wheel moves the selection, like up/down.
         if ((MouseMgr.isScrollUp || MouseMgr.isScrollDown) && _displayedConfigs.Count > 0)
         {
-            var dir = MouseMgr.isScrollUp ? -1 : 1;
-            _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
+            var up = MouseMgr.isScrollUp;
+            if (up)
+            {
+                if (_selectedIndex > 0)
+                    SetSelected(_selectedIndex - 1);
+                else if (SaS2ModOptions.WrapUp.Value)
+                    SetSelected(_displayedConfigs.Count - 1);
+                else
+                    return true;
+            }
+            else
+            {
+                if (_selectedIndex < _displayedConfigs.Count - 1)
+                    SetSelected(_selectedIndex + 1);
+                else if (SaS2ModOptions.WrapDown.Value)
+                    SetSelected(0);
+                else
+                    return true;
+            }
+
             _colorCompIndex = -1;
             PlaySelect();
             EnsureVisible();
@@ -379,6 +478,7 @@ public class LevelModOptions : LevelBase
                 {
                     _currentModIndex = t;
                     _currentCatIndex = 0;
+                    _lastModIndex = t;
                     RefreshDisplayedConfigs();
                     PlaySelect();
                 }
@@ -397,6 +497,7 @@ public class LevelModOptions : LevelBase
                 if (t != _currentCatIndex)
                 {
                     _currentCatIndex = t;
+                    RememberCategory();
                     RefreshDisplayedConfigs();
                     PlaySelect();
                 }
@@ -444,7 +545,7 @@ public class LevelModOptions : LevelBase
             // Moving the cursor selects the row underneath it.
             if (moved && hit.Index != _selectedIndex)
             {
-                _selectedIndex = hit.Index;
+                SetSelected(hit.Index);
                 _colorCompIndex = -1;
                 PlaySelect();
             }
@@ -454,7 +555,7 @@ public class LevelModOptions : LevelBase
             // A click acts on the clicked row: left = increase, right = decrease.
             if (hit.Index != _selectedIndex)
             {
-                _selectedIndex = hit.Index;
+                SetSelected(hit.Index);
                 _colorCompIndex = -1;
             }
 
@@ -492,8 +593,7 @@ public class LevelModOptions : LevelBase
     private static bool PointInRect(Vector2 p, Rectangle r) =>
         p.X > r.X && p.X < r.Right && p.Y > r.Y && p.Y < r.Bottom;
 
-    // The gamepad assigned to this menu's player (falls back to pad 0 for keyboard players),
-    // used when capturing controller combos.
+    // The gamepad assigned to this menu's player (falls back to pad 0 for keyboard players), used when capturing controller combos.
     private GamePadState GetPlayerGamePad()
     {
         var idx = player.inputProfile?.gamepadIdx ?? -1;
@@ -502,8 +602,7 @@ public class LevelModOptions : LevelBase
         return gps != null && idx < gps.Length ? gps[idx] : default;
     }
 
-    // Reset an option to its registered default. Keybinds restore their default combo (and
-    // re-enable); every other option restores the config entry's default value.
+    // Reset an option to its registered default. Keybinds restore their default combo (and re-enable), every other option restores the config entry's default value.
     private void ResetOption(SaS2ModOptions.RegisteredConfig config)
     {
         if (config.IsKeybind)
@@ -518,8 +617,7 @@ public class LevelModOptions : LevelBase
         _colorCompIndex = -1;
     }
 
-    // Enter keybind capture mode. Inputs held right now (e.g. the Accept key/button) are ignored
-    // until released; the combo commits only once all capture inputs are released.
+    // Enter keybind capture mode. Inputs held right now (e.g. the Accept key/button) are ignored until released, the combo commits only once all capture inputs are released.
     private void BeginRebind(SaS2ModOptions.RegisteredConfig config)
     {
         _rebindingConfig = config;
@@ -577,8 +675,7 @@ public class LevelModOptions : LevelBase
         else if (type == typeof(string))
         {
             // Cycle through the registered acceptable values list (if provided).
-            // Color strings (4-part comma format) are handled separately via the
-            // color picker and never reach this branch.
+            // Color strings (4-part comma format) are handled separately via the color picker and never reach this branch.
             var acceptable = config.AcceptableValues;
             if (acceptable == null || acceptable.Length == 0) return;
 
@@ -640,29 +737,29 @@ public class LevelModOptions : LevelBase
     /// Draws the two tab rows (mods on top, the selected mod's categories below) and returns the total height used.
     /// Each row wraps onto multiple lines when needed.
     /// The category row is skipped entirely when the selected mod has only one category.
-    private float LayoutAndDrawTabs(float boxX, float boxY, float boxWidth, bool draw)
+    private float LayoutAndDrawTabs(float boxX, float boxY, float boxWidth, bool draw, float scale = 1f)
     {
         if (!HasTabs) return 0f;
 
-        var tabY = boxY + 6f;
-        var tabH = TabBarHeight - 6f;
+        var tabY = boxY + 6f * scale;
+        var tabH = (TabBarHeight - 6f) * scale;
 
         // Pre-measure each tab width
         var modWidths = new float[_modTabs.Count];
         for (var t = 0; t < _modTabs.Count; t++)
-            modWidths[t] = Text.GetStringSpace(new StringBuilder(_modTabs[t]), 0.65f, player, 1) + TabPadX * 2f;
+            modWidths[t] = Text.GetStringSpace(new StringBuilder(_modTabs[t]), 0.65f * scale, player, 1) + TabPadX * 2f * scale;
 
         var showCatRow = _catTabs.Count > 1;
         var catWidths = new float[showCatRow ? _catTabs.Count : 0];
         for (var t = 0; t < catWidths.Length; t++)
-            catWidths[t] = Text.GetStringSpace(new StringBuilder(_catTabs[t]), 0.65f, player, 1) + TabPadX * 2f;
+            catWidths[t] = Text.GetStringSpace(new StringBuilder(_catTabs[t]), 0.65f * scale, player, 1) + TabPadX * 2f * scale;
 
         // Build rows
         var modRows = BuildTabRows(modWidths, boxWidth);
         var catRows = showCatRow ? BuildTabRows(catWidths, boxWidth) : [];
 
-        var totalTabHeight = (modRows.Count + catRows.Count) * TabBarHeight
-            + (catRows.Count > 0 ? TabDividerHeight : 0f);
+        var totalTabHeight = (modRows.Count + catRows.Count) * TabBarHeight * scale
+            + (catRows.Count > 0 ? TabDividerHeight * scale : 0f);
 
         if (!draw) return totalTabHeight;
 
@@ -676,7 +773,7 @@ public class LevelModOptions : LevelBase
         var rowY = tabY;
         foreach (var rowIndices in modRows)
         {
-            var rowTotalWidth = rowIndices.Sum(idx => modWidths[idx]) + (rowIndices.Count - 1) * TabGap;
+            var rowTotalWidth = rowIndices.Sum(idx => modWidths[idx]) + (rowIndices.Count - 1) * TabGap * scale;
             var curX = boxX + (boxWidth - rowTotalWidth) / 2f;
 
             foreach (var idx in rowIndices)
@@ -687,27 +784,27 @@ public class LevelModOptions : LevelBase
 
                 var selected = idx == _currentModIndex;
                 var focused = selected && _tabFocus == TabFocus.Mods;
-                DrawTab(rect, _modTabs[idx], focused, selected);
+                DrawTab(rect, _modTabs[idx], focused, selected, scale);
 
-                curX += tw + TabGap;
+                curX += tw + TabGap * scale;
             }
 
-            rowY += TabBarHeight;
+            rowY += TabBarHeight * scale;
         }
 
         // Divider between the mod row and the category row.
         if (catRows.Count > 0)
         {
-            rowY += TabDividerHeight * 0.5f;
-            UIRender.DrawDivider(new Vector2(boxX + boxWidth / 2f, rowY), 0.7f, 1f, 1f, 1f, 0.5f, 1,
+            rowY += TabDividerHeight * 0.5f * scale;
+            UIRender.DrawDivider(new Vector2(boxX + boxWidth / 2f, rowY), 0.7f * scale, 1f, 1f, 1f, 0.5f, 1,
                 UIRender.interfaceTex);
-            rowY += TabDividerHeight * 0.5f;
+            rowY += TabDividerHeight * 0.5f * scale;
         }
 
         // Category row(s), centered
         foreach (var rowIndices in catRows)
         {
-            var rowTotalWidth = rowIndices.Sum(idx => catWidths[idx]) + (rowIndices.Count - 1) * TabGap;
+            var rowTotalWidth = rowIndices.Sum(idx => catWidths[idx]) + (rowIndices.Count - 1) * TabGap * scale;
             var curX = boxX + (boxWidth - rowTotalWidth) / 2f;
 
             foreach (var idx in rowIndices)
@@ -718,12 +815,12 @@ public class LevelModOptions : LevelBase
 
                 var selected = idx == _currentCatIndex;
                 var focused = selected && _tabFocus == TabFocus.Cats;
-                DrawTab(rect, _catTabs[idx], focused, selected);
+                DrawTab(rect, _catTabs[idx], focused, selected, scale);
 
-                curX += tw + TabGap;
+                curX += tw + TabGap * scale;
             }
 
-            rowY += TabBarHeight;
+            rowY += TabBarHeight * scale;
         }
 
         return totalTabHeight;
@@ -757,27 +854,29 @@ public class LevelModOptions : LevelBase
     }
 
     /// Draws a single tab. Focused tabs get a bright border, selected tabs are yellow.
-    private void DrawTab(Rectangle rect, string label, bool focused, bool selected)    {
+    private void DrawTab(Rectangle rect, string label, bool focused, bool selected, float scale = 1f)
+    {
+        var textSize = 0.65f * scale;
         if (focused)
         {
             UIRender.DrawRect(rect, 0.35f, 3, 1f, 1f, UIRender.interfaceTex);
             Text.DrawText(new StringBuilder(label),
                 new Vector2(rect.X + rect.Width / 2f, rect.Y + rect.Height * 0.72f),
-                Color.Yellow, 0.65f, 1);
+                Color.Yellow, textSize, 1);
         }
         else if (selected)
         {
             UIRender.DrawRect(rect, 0.25f, 0, 1f, 1f, UIRender.interfaceTex);
             Text.DrawText(new StringBuilder(label),
                 new Vector2(rect.X + rect.Width / 2f, rect.Y + rect.Height * 0.72f),
-                Color.Yellow, 0.65f, 1);
+                Color.Yellow, textSize, 1);
         }
         else
         {
             UIRender.DrawRect(rect, 0.15f, 0, 1f, 1f, UIRender.interfaceTex);
             Text.DrawText(new StringBuilder(label),
                 new Vector2(rect.X + rect.Width / 2f, rect.Y + rect.Height * 0.72f),
-                new Color(0.7f, 0.7f, 0.7f, 1f), 0.65f, 1);
+                new Color(0.7f, 0.7f, 0.7f, 1f), textSize, 1);
         }
     }
 
@@ -785,8 +884,10 @@ public class LevelModOptions : LevelBase
     {
         base.Draw();
         var vp = Game1.Instance.GraphicsDevice.Viewport;
-        var boxWidth = vp.Width * 0.5f;
-        var boxHeight = vp.Height * 0.8f;
+        var scale = Math.Max(0.5f, Math.Min(2f, SaS2ModOptions.MenuScale.Value));
+        _currentScale = scale;
+        var boxWidth = vp.Width * 0.5f * scale;
+        var boxHeight = vp.Height * 0.8f * scale;
 
         // Always assume local coop; menu takes place in respective player's side
         var margin = boxWidth * 0.025f;
@@ -798,16 +899,17 @@ public class LevelModOptions : LevelBase
             UIRender.interfaceTex);
 
         // Draw tabs
-        var usedTabHeight = LayoutAndDrawTabs(boxX, boxY, boxWidth, true);
+        var usedTabHeight = LayoutAndDrawTabs(boxX, boxY, boxWidth, true, scale);
 
         // Config list area
-        _listX = boxX + 40f;
-        _listY = boxY + TopMargin + usedTabHeight;
-        _listWidth = boxWidth - 80f;
-        var listVisibleHeight = boxHeight - TopMargin - usedTabHeight - BottomMargin;
+        _listX = boxX + 40f * scale;
+        _listY = boxY + TopMargin * scale + usedTabHeight;
+        _listWidth = boxWidth - 80f * scale;
+        var listVisibleHeight = boxHeight - TopMargin * scale - usedTabHeight - BottomMargin * scale;
         _currentListVisibleHeight = listVisibleHeight;
 
         var currentY = _listY - _scrollOffset;
+        var itemHeight = ItemHeight * scale;
 
         // Rebuild the item hit-test table each frame for mouse hover/click.
         _itemHitRects.Clear();
@@ -818,35 +920,35 @@ public class LevelModOptions : LevelBase
             var selected = i == _selectedIndex;
 
             // Config row
-            if (currentY + ItemHeight > _listY && currentY < _listY + listVisibleHeight)
+            if (currentY + itemHeight > _listY && currentY < _listY + listVisibleHeight)
             {
                 _itemHitRects.Add(new ItemHit
                 {
                     Index = i,
-                    Rect = new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight)
+                    Rect = new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)itemHeight)
                 });
 
                 if (selected)
-                    UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight), 0.2f,
+                    UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)itemHeight), 0.2f,
                         3, 1f, 1f, UIRender.interfaceTex);
 
                 var textColor = selected ? Color.Yellow : Color.White;
-                var textY = currentY + ItemHeight * 0.75f;
+                var textY = currentY + itemHeight * 0.75f;
 
-                Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10, textY), textColor, 0.7f, 0);
+                Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10 * scale, textY), textColor, 0.7f * scale, 0);
 
                 var valStr = FormatValue(cfg, selected);
-                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth, textY),
-                    textColor, 0.7f, 0);
+                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth * scale, textY),
+                    textColor, 0.7f * scale, 0);
             }
 
-            currentY += ItemHeight;
+            currentY += itemHeight;
         }
 
-        DrawHelpBar(boxX, boxWidth, vp.Height);
+        DrawHelpBar(boxX, boxWidth, vp.Height, scale);
     }
 
-    private void DrawHelpBar(float boxX, float boxWidth, float vpHeight)
+    private void DrawHelpBar(float boxX, float boxWidth, float vpHeight, float scale = 1f)
     {
         var useKeyboard = player.inputProfile.keyMouseEnable;
         var action = useKeyboard ? "[Space]" : "[a]";
@@ -875,7 +977,11 @@ public class LevelModOptions : LevelBase
         var bottom = new StringBuilder();
         bottom.Append("\u02ef[b]\u02f0 Back");
         if (HasTabs)
+        {
             bottom.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab  |  \u02ef[Up]/[Dn]\u02f0 Row" : "  |  \u02ef[lt]/[rt]\u02f0 Tab  |  \u02ef[up]/[dn]\u02f0 Row");
+            if (SaS2ModOptions.DodgeBlockSwitchMods.Value)
+                bottom.Append(useKeyboard ? "  |  \u02ef[Shift]/[Ctrl]\u02f0 Mod" : "  |  \u02ef[R2]/[L2]\u02f0 Mod");
+        }
         Text.DrawText(bottom, new Vector2(centerX, vpHeight - 38), Color.White, 0.6f, 1, player, 1);
     }
 
@@ -921,14 +1027,26 @@ public class LevelModOptions : LevelBase
     }
 
     // Scrolling helpers
-    private float GetItemY(int index) => index * ItemHeight;
+    private float _currentScale = 1f;
+    private float GetItemY(int index) => index * ItemHeight * _currentScale;
+
+    /// Sets the selected option and records it for the Remember Last Position feature.
+    private void SetSelected(int index)
+    {
+        _selectedIndex = index;
+        if (_modTabs.Count > 0 && _currentModIndex < _modTabs.Count &&
+            _catTabs.Count > 0 && _currentCatIndex < _catTabs.Count)
+        {
+            _lastSelectedByCat[_modTabs[_currentModIndex] + "/" + _catTabs[_currentCatIndex]] = index;
+        }
+    }
 
     private void EnsureVisible()
     {
         if (_displayedConfigs.Count == 0) return;
 
         var itemTop = GetItemY(_selectedIndex);
-        var itemBottom = itemTop + ItemHeight;
+        var itemBottom = itemTop + ItemHeight * _currentScale;
 
         // Use the visible area that was computed during the last Draw()
         var visibleTop = _scrollOffset;
