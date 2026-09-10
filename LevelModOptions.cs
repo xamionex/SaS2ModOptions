@@ -856,12 +856,19 @@ public class LevelModOptions : LevelBase
                               _selectedIndex < _displayedConfigs.Count &&
                               _displayedConfigs[_selectedIndex].IsKeybind;
 
-        // Line 1: edit / change / reset (/ enable toggle for keybinds).
+        // Fast stepping only applies to float options (Accept toggles it).
+        var selectedFloat = _displayedConfigs is { Count: > 0 } && _selectedIndex >= 0 &&
+                            _selectedIndex < _displayedConfigs.Count &&
+                            GetActiveEntry(_displayedConfigs[_selectedIndex]).SettingType == typeof(float);
+
+        // Line 1: edit / change / reset (/ enable toggle for keybinds, / fast stepping for floats).
         var top = new StringBuilder();
         top.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  ");
         top.Append(useKeyboard ? "\u02efBksp\u02f0 Reset" : "\u02ef[x]\u02f0 Reset");
         if (selectedKeybind)
             top.Append(useKeyboard ? "  |  \u02efTab\u02f0 On/Off" : "  |  \u02ef[y]\u02f0 On/Off");
+        else if (selectedFloat)
+            top.Append($"  |  \u02ef{action}\u02f0 Fast: {(_fast ? "On" : "Off")}");
         Text.DrawText(top, new Vector2(centerX, vpHeight - 62), Color.White, 0.6f, 1, player, 1);
 
         // Line 2: back / tab (kept on their own line so the bar does not get too wide).
