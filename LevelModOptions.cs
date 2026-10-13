@@ -887,7 +887,7 @@ public class LevelModOptions : LevelBase
         var scale = Math.Max(0.5f, Math.Min(2f, SaS2ModOptions.MenuScale.Value));
         _currentScale = scale;
         var boxWidth = vp.Width * 0.5f * scale;
-        var boxHeight = vp.Height * 0.8f * scale;
+        var boxHeight = vp.Height * 0.7f * scale;
 
         // Always assume local coop; menu takes place in respective player's side
         var margin = boxWidth * 0.025f;
@@ -945,10 +945,11 @@ public class LevelModOptions : LevelBase
             currentY += itemHeight;
         }
 
-        DrawHelpBar(boxX, boxWidth, vp.Height, scale);
+        DrawHelpBar(boxX, boxWidth, boxY + boxHeight, vp.Height, scale);
     }
 
-    private void DrawHelpBar(float boxX, float boxWidth, float vpHeight, float scale = 1f)
+    // Control tips plus the selected setting's description, drawn right under the menu box.
+    private void DrawHelpBar(float boxX, float boxWidth, float boxBottom, float vpHeight, float scale = 1f)
     {
         var useKeyboard = player.inputProfile.keyMouseEnable;
         var action = useKeyboard ? "[Space]" : "[a]";
@@ -971,7 +972,8 @@ public class LevelModOptions : LevelBase
             top.Append(useKeyboard ? "  |  \u02efTab\u02f0 On/Off" : "  |  \u02ef[y]\u02f0 On/Off");
         else if (selectedFloat)
             top.Append($"  |  \u02ef{action}\u02f0 Fast: {(_fast ? "On" : "Off")}");
-        Text.DrawText(top, new Vector2(centerX, vpHeight - 62), Color.White, 0.6f, 1, player, 1);
+        var line1Y = boxBottom + 26f * scale;
+        Text.DrawText(top, new Vector2(centerX, line1Y), Color.White, 0.6f * scale, 1, player, 1);
 
         // Line 2: back / tab (kept on their own line so the bar does not get too wide).
         var bottom = new StringBuilder();
@@ -982,8 +984,79 @@ public class LevelModOptions : LevelBase
             if (SaS2ModOptions.DodgeBlockSwitchMods.Value)
                 bottom.Append(useKeyboard ? "  |  \u02ef[Shift]/[Ctrl]\u02f0 Mod" : "  |  \u02ef[R2]/[L2]\u02f0 Mod");
         }
-        Text.DrawText(bottom, new Vector2(centerX, vpHeight - 38), Color.White, 0.6f, 1, player, 1);
+        var line2Y = line1Y + 24f * scale;
+        Text.DrawText(bottom, new Vector2(centerX, line2Y), Color.White, 0.6f * scale, 1, player, 1);
+
+        DrawSelectedDescription(boxX, boxWidth, line2Y + 26f * scale, vpHeight, scale);
     }
+
+    // Draws what the currently selected setting does (its config description), word-wrapped to the menu width.
+    private void DrawSelectedDescription(float boxX, float boxWidth, float startY, float vpHeight, float scale)
+    {
+        if (_displayedConfigs is not { Count: > 0 } || _selectedIndex < 0 || _selectedIndex >= _displayedConfigs.Count)
+            return;
+
+        var desc = GetActiveEntry(_displayedConfigs[_selectedIndex]).Description.Description;
+        if (string.IsNullOrEmpty(desc)) return;
+
+        var size = 0.55f * scale;
+        var color = new Color(0.75f, 0.75f, 0.75f, 1f);
+        var centerX = boxX + boxWidth / 2f;
+        var y = startY;
+        foreach (var line in WrapText(desc, size, boxWidth - 80f * scale))
+        {
+            // Stop once the lines would run off the bottom of the screen.
+            if (y > vpHeight - 10f * scale) break;
+            Text.DrawText(new StringBuilder(line), new Vector2(centerX, y), color, size, 1, player, 1);
+            y += size * 40f;
+        }
+    }
+
+    // Word-wraps text into lines that fit maxWidth, measured with the game's own font metrics.
+    private List<string> WrapText(string text, float size, float maxWidth)
+    {
+        var lines = new List<string>();
+        foreach (var rawLine in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            var current = "";
+            foreach (var word in rawLine.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                // A single word wider than a whole line is hard-split so nothing overflows.
+                if (current.Length == 0 && MeasureText(word, size) > maxWidth)
+                {
+                    var chunk = "";
+                    foreach (var ch in word)
+                    {
+                        if (chunk.Length > 0 && MeasureText(chunk + ch, size) > maxWidth)
+                        {
+                            lines.Add(chunk);
+                            chunk = "";
+                        }
+                        chunk += ch;
+                    }
+                    current = chunk;
+                    continue;
+                }
+
+                var candidate = current.Length == 0 ? word : current + " " + word;
+                if (current.Length > 0 && MeasureText(candidate, size) > maxWidth)
+                {
+                    lines.Add(current);
+                    current = word;
+                }
+                else
+                {
+                    current = candidate;
+                }
+            }
+            lines.Add(current);
+        }
+        return lines;
+    }
+
+    // Width of a string as DrawText renders it at the same size (DrawText scales glyphs by 0.8 internally).
+    private float MeasureText(string text, float size) =>
+        Text.GetStringSpace(new StringBuilder(text), size * 0.8f, player, 1);
 
     private string FormatValue(SaS2ModOptions.RegisteredConfig config, bool selected)
     {
